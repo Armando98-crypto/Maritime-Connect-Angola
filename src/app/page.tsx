@@ -7,11 +7,11 @@ export default async function PaginaInicial() {
   const sessao = await auth();
 
   if (sessao?.user?.papel === "ARMADOR") {
-    redirect("/armador/pedidos");
+    redirect("/armador/dashboard");
   }
 
   if (sessao?.user?.papel === "AGENTE") {
-    redirect("/agente/pedidos");
+    redirect("/agente/dashboard");
   }
 
   if (!sessao?.user) {

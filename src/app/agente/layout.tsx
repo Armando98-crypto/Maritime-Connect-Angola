@@ -10,9 +10,19 @@ export default async function LayoutAgente({ children }: { children: ReactNode }
     <div className="min-h-screen flex flex-col">
       <header className="border-b border-slate-200 bg-white">
         <div className="mx-auto flex max-w-2xl items-center justify-between px-4 py-3">
-          <Link href="/agente/pedidos" className="font-semibold text-slate-900">
-            Maritime Connect Angola
-          </Link>
+          <div className="flex items-center gap-4">
+            <Link href="/agente/dashboard" className="font-semibold text-slate-900">
+              Maritime Connect Angola
+            </Link>
+            <nav className="hidden text-sm text-slate-600 sm:flex sm:items-center sm:gap-3">
+              <Link href="/agente/dashboard" className="hover:text-sky-700">
+                Quadro de bordo
+              </Link>
+              <Link href="/agente/pedidos" className="hover:text-sky-700">
+                Pedidos
+              </Link>
+            </nav>
+          </div>
           <div className="flex items-center gap-3">
             <span className="text-sm text-slate-600">{sessao.user.name}</span>
             <form
