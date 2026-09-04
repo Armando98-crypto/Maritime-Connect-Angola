@@ -5,7 +5,9 @@ import {
   listarPropostasDoAgente,
 } from "@/servicos/propostaServico";
 import { listarAvaliacoesRecebidas } from "@/servicos/avaliacaoServico";
+import { listarComissoesDoAgente } from "@/servicos/comissaoServico";
 import { Button } from "@/components/ui/Button";
+import { PagamentoComissao } from "./PagamentoComissao";
 
 const rotuloEstadoProposta: Record<string, string> = {
   PENDENTE: "Pendente",
@@ -36,6 +38,7 @@ export default async function PaginaQuadroPedidos() {
   const pedidos = await listarPedidosAbertosParaAgente();
   const minhasPropostas = await listarPropostasDoAgente(sessao!.user.id);
   const avaliacoes = await listarAvaliacoesRecebidas(sessao!.user.id);
+  const comissoes = await listarComissoesDoAgente(sessao!.user.id);
 
   // Marcamos os pedidos para os quais o agente já enviou proposta,
   // para não os voltar a oferecer (e o serviço também bloqueia no
@@ -166,6 +169,49 @@ export default async function PaginaQuadroPedidos() {
                 {avaliacao.comentario && (
                   <p className="mt-2 text-sm text-slate-600">{avaliacao.comentario}</p>
                 )}
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {comissoes.length > 0 && (
+        <section className="mt-10">
+          <h2 className="text-xl font-semibold text-slate-900">As minhas comissões</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Comissão da plataforma sobre o valor da proposta aceite, a pagar
+            após a prestação do serviço.
+          </p>
+          <ul className="mt-3 flex flex-col gap-3">
+            {comissoes.map((comissao) => (
+              <li
+                key={comissao.id}
+                className="rounded-lg border border-slate-200 px-4 py-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-slate-900">{comissao.navio}</p>
+                    <p className="text-sm text-slate-600">
+                      Comissão: {formatadorPreco.format(Number(comissao.valorComissao))}
+                    </p>
+                    <p className="text-sm text-slate-500">
+                      {Number(comissao.percentagem)}% de{" "}
+                      {formatadorPreco.format(Number(comissao.valorBase))}
+                    </p>
+                  </div>
+                  {comissao.estado === "PENDENTE" ? (
+                    <div className="flex flex-col items-end gap-2">
+                      <span className="whitespace-nowrap rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+                        Pendente
+                      </span>
+                      <PagamentoComissao comissaoId={comissao.id} />
+                    </div>
+                  ) : (
+                    <span className="whitespace-nowrap rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-800">
+                      Paga
+                    </span>
+                  )}
+                </div>
               </li>
             ))}
           </ul>

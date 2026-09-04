@@ -7,6 +7,7 @@ const mockPropostaFindMany = vi.fn();
 const mockPropostaUpdate = vi.fn();
 const mockPropostaUpdateMany = vi.fn();
 const mockPedidoUpdate = vi.fn();
+const mockComissaoCreate = vi.fn();
 const mockTransaction = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
@@ -21,6 +22,9 @@ vi.mock("@/lib/prisma", () => ({
       findMany: (...args: unknown[]) => mockPropostaFindMany(...args),
       update: (...args: unknown[]) => mockPropostaUpdate(...args),
       updateMany: (...args: unknown[]) => mockPropostaUpdateMany(...args),
+    },
+    comissao: {
+      create: (...args: unknown[]) => mockComissaoCreate(...args),
     },
     $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
@@ -49,6 +53,7 @@ function resetMocks() {
   mockPropostaUpdate.mockReset();
   mockPropostaUpdateMany.mockReset();
   mockPedidoUpdate.mockReset();
+  mockComissaoCreate.mockReset();
   mockTransaction.mockReset();
   mockPedidoFindMany.mockReset();
   mockPropostaFindMany.mockReset();
@@ -57,25 +62,27 @@ function resetMocks() {
 describe("aceitarProposta", () => {
   beforeEach(resetMocks);
 
-  it("aceita a proposta, recusa as restantes pendentes e atribui o pedido numa transacção", async () => {
+  it("aceita a proposta, recusa as restantes pendentes, atribui o pedido e gera a comissão numa transacção", async () => {
     mockPedidoFindUnique.mockResolvedValue(pedidoDoArmador);
     mockPropostaFindUnique.mockResolvedValue({
       id: "proposta_1",
       pedidoId: "pedido_1",
       estado: "PENDENTE",
+      preco: 100_000,
     });
     // Os passos da transacção são promises Prisma; mockamo-los (o que
     // importa são os argumentos passados a cada passo).
     mockPropostaUpdate.mockResolvedValue({});
     mockPropostaUpdateMany.mockResolvedValue({});
     mockPedidoUpdate.mockResolvedValue({});
-    mockTransaction.mockResolvedValue([{}, {}, {}]);
+    mockComissaoCreate.mockResolvedValue({});
+    mockTransaction.mockResolvedValue([{}, {}, {}, {}]);
 
     await aceitarProposta("pedido_1", "proposta_1", "armador_1");
 
-    // Os três passos são envolvidos numa transacção.
+    // Os quatro passos são envolvidos numa transacção.
     expect(mockTransaction).toHaveBeenCalledTimes(1);
-    expect(mockTransaction.mock.calls[0][0]).toHaveLength(3);
+    expect(mockTransaction.mock.calls[0][0]).toHaveLength(4);
 
     // proposta escolhida -> ACEITE
     expect(mockPropostaUpdate).toHaveBeenCalledWith({
@@ -91,6 +98,15 @@ describe("aceitarProposta", () => {
     expect(mockPedidoUpdate).toHaveBeenCalledWith({
       where: { id: "pedido_1" },
       data: { estado: "ATRIBUIDO", propostaAceiteId: "proposta_1" },
+    });
+    // comissão gerada: 10% de 100000 = 10000
+    expect(mockComissaoCreate).toHaveBeenCalledWith({
+      data: {
+        pedidoId: "pedido_1",
+        valorBase: 100_000,
+        percentagem: 10,
+        valorComissao: 10_000,
+      },
     });
   });
 

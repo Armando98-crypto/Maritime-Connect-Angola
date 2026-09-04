@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { CriarPropostaInput } from "@/lib/validacoes/proposta";
+import { PERCENTAGEM_COMISSAO, calcularValorComissao } from "./comissaoServico";
 
 /**
  * O pedido não existe, não está aberto (já foi atribuído/concluído/
@@ -213,6 +214,7 @@ export async function obterPedidoComPropostas(pedidoId: string, armadorId: strin
         select: { id: true, preco: true, prazoDias: true, agenteId: true },
       },
       avaliacao: true,
+      comissao: true,
       propostas: {
         orderBy: { criadoEm: "asc" },
         include: {
@@ -242,7 +244,8 @@ export async function obterPedidoComPropostas(pedidoId: string, armadorId: strin
  * Aceita a proposta escolhida pelo armador. Efeitos, num passo atómico:
  *  - a proposta escolhida passa a ACEITE;
  *  - o pedido passa a ATRIBUIDO e fica ligado à proposta aceite;
- *  - todas as restantes propostas pendentes passam a RECUSADA.
+ *  - todas as restantes propostas pendentes passam a RECUSADA;
+ *  - gera a comissão da plataforma (valor base = preço, percentagem fixa).
  *
  * Só é possível enquanto o pedido está ABERTO e a proposta ainda está
  * PENDENTE. O armador tem de ser dono do pedido.
@@ -271,7 +274,7 @@ export async function aceitarProposta(
 
   const proposta = await prisma.proposta.findUnique({
     where: { id: propostaId },
-    select: { id: true, pedidoId: true, estado: true },
+    select: { id: true, pedidoId: true, estado: true, preco: true },
   });
 
   if (!proposta || proposta.pedidoId !== pedidoId) {
@@ -281,6 +284,8 @@ export async function aceitarProposta(
   if (proposta.estado !== "PENDENTE") {
     throw new PropostaJaDecididaError();
   }
+
+  const valorBase = Number(proposta.preco);
 
   return prisma.$transaction([
     prisma.proposta.update({
@@ -294,6 +299,14 @@ export async function aceitarProposta(
     prisma.pedido.update({
       where: { id: pedidoId },
       data: { estado: "ATRIBUIDO", propostaAceiteId: propostaId },
+    }),
+    prisma.comissao.create({
+      data: {
+        pedidoId,
+        valorBase,
+        percentagem: PERCENTAGEM_COMISSAO,
+        valorComissao: calcularValorComissao(valorBase),
+      },
     }),
   ]);
 }

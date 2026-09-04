@@ -33,6 +33,12 @@ const formatadorData = new Intl.DateTimeFormat("pt-PT", {
   year: "numeric",
 });
 
+const formatadorPreco = new Intl.NumberFormat("pt-PT", {
+  style: "currency",
+  currency: "AOA",
+  maximumFractionDigits: 0,
+});
+
 export default async function PaginaGestaoPedido({ params }: Parametros) {
   const sessao = await auth();
   const { id } = await params;
@@ -139,6 +145,35 @@ export default async function PaginaGestaoPedido({ params }: Parametros) {
           ) : (
             <AvaliarPedido pedidoId={pedido.id} navio={pedido.navio} />
           )}
+        </div>
+      )}
+
+      {pedido.comissao && (
+        <div className="mt-8 rounded-lg border border-slate-200 px-4 py-3">
+          <h2 className="text-xl font-semibold text-slate-900">Comissão da plataforma</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Comissão gerada ao aceitar a proposta. É cobrada ao agente escolhido.
+          </p>
+          <dl className="mt-3 grid grid-cols-1 gap-2 text-sm sm:grid-cols-3">
+            <div>
+              <dt className="text-slate-500">Valor base</dt>
+              <dd className="font-medium text-slate-900">
+                {formatadorPreco.format(Number(pedido.comissao.valorBase))}
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Percentagem</dt>
+              <dd className="font-medium text-slate-900">
+                {Number(pedido.comissao.percentagem)}%
+              </dd>
+            </div>
+            <div>
+              <dt className="text-slate-500">Comissão</dt>
+              <dd className="font-medium text-slate-900">
+                {formatadorPreco.format(Number(pedido.comissao.valorComissao))}
+              </dd>
+            </div>
+          </dl>
         </div>
       )}
 
