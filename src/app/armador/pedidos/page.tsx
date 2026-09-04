@@ -48,7 +48,7 @@ export default async function PaginaPedidos() {
             Publique o primeiro pedido para que os agentes de navegação
             verificados possam enviar propostas.
           </p>
-          <Link href="/pedidos/novo" className="mt-4 inline-block">
+          <Link href="/armador/pedidos/novo" className="mt-4 inline-block">
             <Button>Publicar o primeiro pedido</Button>
           </Link>
         </div>
@@ -59,25 +59,27 @@ export default async function PaginaPedidos() {
               key={pedido.id}
               className="rounded-lg border border-slate-200 px-4 py-3"
             >
-              <div className="flex items-start justify-between gap-3">
-                <div>
-                  <p className="font-medium text-slate-900">{pedido.navio}</p>
-                  <p className="text-sm text-slate-600">
-                    Chegada prevista: {formatadorData.format(pedido.dataPrevistaChegada)}
-                  </p>
-                  <p className="text-sm text-slate-500">Porto do Namibe</p>
+              <Link href={`/armador/pedidos/${pedido.id}`} className="block">
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-slate-900">{pedido.navio}</p>
+                    <p className="text-sm text-slate-600">
+                      Chegada prevista: {formatadorData.format(pedido.dataPrevistaChegada)}
+                    </p>
+                    <p className="text-sm text-slate-500">Porto do Namibe</p>
+                  </div>
+                  <span
+                    className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${corEstado[pedido.estado]}`}
+                  >
+                    {rotuloEstado[pedido.estado]}
+                  </span>
                 </div>
-                <span
-                  className={`whitespace-nowrap rounded-full px-2.5 py-1 text-xs font-medium ${corEstado[pedido.estado]}`}
-                >
-                  {rotuloEstado[pedido.estado]}
-                </span>
-              </div>
-              <p className="mt-2 text-sm text-slate-600">
-                {pedido._count.propostas === 0
-                  ? "Ainda sem propostas."
-                  : `${pedido._count.propostas} proposta(s) recebida(s).`}
-              </p>
+                <p className="mt-2 text-sm text-slate-600">
+                  {pedido._count.propostas === 0
+                    ? "Ainda sem propostas."
+                    : `${pedido._count.propostas} proposta(s) recebida(s). Ver propostas →`}
+                </p>
+              </Link>
             </li>
           ))}
         </ul>

@@ -1,6 +1,6 @@
 "use client";
 
-import { useState, type FormEvent } from "react";
+import { Suspense, useState, type FormEvent } from "react";
 import { useRouter, useSearchParams } from "next/navigation";
 import { signIn } from "next-auth/react";
 import { loginSchema } from "@/lib/validacoes/auth";
@@ -8,7 +8,7 @@ import { Input } from "@/components/ui/Input";
 import { Button } from "@/components/ui/Button";
 import { ErroFormulario, SucessoFormulario } from "@/components/estado/Alertas";
 
-export default function PaginaLogin() {
+function ConteudoLogin() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const acabouDeRegistar = searchParams.get("registado") === "1";
@@ -113,5 +113,19 @@ export default function PaginaLogin() {
         </a>
       </p>
     </main>
+  );
+}
+
+export default function PaginaLogin() {
+  return (
+    <Suspense
+      fallback={
+        <main className="mx-auto flex min-h-screen max-w-md flex-col justify-center gap-6 px-4 py-10">
+          <h1 className="text-2xl font-semibold text-slate-900">Entrar</h1>
+        </main>
+      }
+    >
+      <ConteudoLogin />
+    </Suspense>
   );
 }

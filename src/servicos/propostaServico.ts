@@ -38,6 +38,49 @@ export class PropostaDuplicadaError extends Error {
 }
 
 /**
+ * O armador tentou aceder a um pedido que não lhe pertence — ou a uma
+ * proposta que não pertence a um dos seus pedidos.
+ */
+export class SemPermissaoError extends Error {
+  constructor() {
+    super("Não tem permissão para aceder a este pedido.");
+    this.name = "SemPermissaoError";
+  }
+}
+
+/**
+ * O pedido (ou a proposta) pedido pelo armador não existe.
+ */
+export class NaoEncontradoError extends Error {
+  constructor() {
+    super("O recurso pedido não foi encontrado.");
+    this.name = "NaoEncontradoError";
+  }
+}
+
+/**
+ * O pedido já não está aberto para aceitar/recusar propostas (já foi
+ * atribuído a um agente, concluído ou cancelado).
+ */
+export class PedidoFechadoError extends Error {
+  constructor() {
+    super("Este pedido já não aceita alterações às propostas.");
+    this.name = "PedidoFechadoError";
+  }
+}
+
+/**
+ * A proposta já foi decidida (aceite ou recusada) — não pode voltar a
+ * ser alterada.
+ */
+export class PropostaJaDecididaError extends Error {
+  constructor() {
+    super("Esta proposta já foi decidida.");
+    this.name = "PropostaJaDecididaError";
+  }
+}
+
+/**
  * Envia uma proposta de um agente para um pedido aberto.
  *
  * Desenha as propostas como "às cegas" na fase actual: o agente vê o
@@ -121,5 +164,178 @@ export async function listarPropostasDoAgente(agenteId: string) {
 export async function obterPedidoAbertoParaAgente(pedidoId: string) {
   return prisma.pedido.findFirst({
     where: { id: pedidoId, estado: "ABERTO" },
+  });
+}
+
+/**
+ * Lista as propostas recebidas de um pedido do armador, com o nome da
+ * empresa do agente que as enviou. Só devolve as propostas se o pedido
+ * pertencer ao armador indicado; caso contrário lança SemPermissaoError.
+ */
+export async function listarPropostasDePedido(pedidoId: string, armadorId: string) {
+  const pedido = await prisma.pedido.findUnique({
+    where: { id: pedidoId },
+    select: { id: true, armadorId: true },
+  });
+
+  if (!pedido) {
+    throw new NaoEncontradoError();
+  }
+
+  if (pedido.armadorId !== armadorId) {
+    throw new SemPermissaoError();
+  }
+
+  return prisma.proposta.findMany({
+    where: { pedidoId },
+    orderBy: { criadoEm: "asc" },
+    include: {
+      agente: {
+        select: {
+          nome: true,
+          perfilAgente: { select: { nomeEmpresa: true } },
+        },
+      },
+    },
+  });
+}
+
+/**
+ * Carrega um pedido do armador juntamente com as propostas recebidas,
+ * para a página de gestão. Devolve `null` se não existir e lança
+ * SemPermissaoError se o pedido não pertencer ao armador.
+ */
+export async function obterPedidoComPropostas(pedidoId: string, armadorId: string) {
+  const pedido = await prisma.pedido.findUnique({
+    where: { id: pedidoId },
+    include: {
+      propostaAceite: { select: { id: true, preco: true, prazoDias: true } },
+      propostas: {
+        orderBy: { criadoEm: "asc" },
+        include: {
+          agente: {
+            select: {
+              nome: true,
+              perfilAgente: { select: { nomeEmpresa: true } },
+            },
+          },
+        },
+      },
+    },
+  });
+
+  if (!pedido) {
+    return null;
+  }
+
+  if (pedido.armadorId !== armadorId) {
+    throw new SemPermissaoError();
+  }
+
+  return pedido;
+}
+
+/**
+ * Aceita a proposta escolhida pelo armador. Efeitos, num passo atómico:
+ *  - a proposta escolhida passa a ACEITE;
+ *  - o pedido passa a ATRIBUIDO e fica ligado à proposta aceite;
+ *  - todas as restantes propostas pendentes passam a RECUSADA.
+ *
+ * Só é possível enquanto o pedido está ABERTO e a proposta ainda está
+ * PENDENTE. O armador tem de ser dono do pedido.
+ */
+export async function aceitarProposta(
+  pedidoId: string,
+  propostaId: string,
+  armadorId: string
+) {
+  const pedido = await prisma.pedido.findUnique({
+    where: { id: pedidoId },
+    select: { id: true, armadorId: true, estado: true, propostaAceiteId: true },
+  });
+
+  if (!pedido) {
+    throw new NaoEncontradoError();
+  }
+
+  if (pedido.armadorId !== armadorId) {
+    throw new SemPermissaoError();
+  }
+
+  if (pedido.estado !== "ABERTO" || pedido.propostaAceiteId) {
+    throw new PedidoFechadoError();
+  }
+
+  const proposta = await prisma.proposta.findUnique({
+    where: { id: propostaId },
+    select: { id: true, pedidoId: true, estado: true },
+  });
+
+  if (!proposta || proposta.pedidoId !== pedidoId) {
+    throw new NaoEncontradoError();
+  }
+
+  if (proposta.estado !== "PENDENTE") {
+    throw new PropostaJaDecididaError();
+  }
+
+  return prisma.$transaction([
+    prisma.proposta.update({
+      where: { id: propostaId },
+      data: { estado: "ACEITE" },
+    }),
+    prisma.proposta.updateMany({
+      where: { pedidoId, id: { not: propostaId }, estado: "PENDENTE" },
+      data: { estado: "RECUSADA" },
+    }),
+    prisma.pedido.update({
+      where: { id: pedidoId },
+      data: { estado: "ATRIBUIDO", propostaAceiteId: propostaId },
+    }),
+  ]);
+}
+
+/**
+ * Recusa uma proposta. Só é possível enquanto o pedido está ABERTO e a
+ * proposta ainda está PENDENTE. O armador tem de ser dono do pedido.
+ */
+export async function recusarProposta(
+  pedidoId: string,
+  propostaId: string,
+  armadorId: string
+) {
+  const pedido = await prisma.pedido.findUnique({
+    where: { id: pedidoId },
+    select: { id: true, armadorId: true, estado: true, propostaAceiteId: true },
+  });
+
+  if (!pedido) {
+    throw new NaoEncontradoError();
+  }
+
+  if (pedido.armadorId !== armadorId) {
+    throw new SemPermissaoError();
+  }
+
+  if (pedido.estado !== "ABERTO" || pedido.propostaAceiteId) {
+    throw new PedidoFechadoError();
+  }
+
+  const proposta = await prisma.proposta.findUnique({
+    where: { id: propostaId },
+    select: { id: true, pedidoId: true, estado: true },
+  });
+
+  if (!proposta || proposta.pedidoId !== pedidoId) {
+    throw new NaoEncontradoError();
+  }
+
+  if (proposta.estado !== "PENDENTE") {
+    throw new PropostaJaDecididaError();
+  }
+
+  return prisma.proposta.update({
+    where: { id: propostaId },
+    data: { estado: "RECUSADA" },
   });
 }
