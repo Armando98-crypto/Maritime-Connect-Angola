@@ -1,10 +1,9 @@
 import { NextResponse } from "next/server";
 import { auth } from "@/lib/auth";
+import { confirmarPagamentoComissao } from "@/servicos/adminServico";
 import {
-  marcarComissaoPaga,
   ComissaoNaoEncontradaError,
   ComissaoJaPagaError,
-  SemPermissaoComissaoError,
 } from "@/servicos/comissaoServico";
 
 export async function POST(
@@ -17,9 +16,9 @@ export async function POST(
     return NextResponse.json({ erro: "É necessário iniciar sessão." }, { status: 401 });
   }
 
-  if (sessao.user.papel !== "AGENTE") {
+  if (!sessao.user.isAdmin) {
     return NextResponse.json(
-      { erro: "Só agentes podem marcar as suas comissões como pagas." },
+      { erro: "Só administradores podem confirmar pagamentos." },
       { status: 403 }
     );
   }
@@ -27,21 +26,18 @@ export async function POST(
   const { id } = await params;
 
   try {
-    await marcarComissaoPaga(id, sessao.user.id);
+    await confirmarPagamentoComissao(id);
     return NextResponse.json({ ok: true });
   } catch (erro) {
     if (erro instanceof ComissaoNaoEncontradaError) {
       return NextResponse.json({ erro: erro.message }, { status: 404 });
     }
-    if (
-      erro instanceof SemPermissaoComissaoError ||
-      erro instanceof ComissaoJaPagaError
-    ) {
+    if (erro instanceof ComissaoJaPagaError) {
       return NextResponse.json({ erro: erro.message }, { status: 409 });
     }
-    console.error("Erro inesperado ao marcar comissão como paga:", erro);
+    console.error("Erro inesperado ao confirmar pagamento da comissão:", erro);
     return NextResponse.json(
-      { erro: "Não foi possível marcar a comissão como paga. Tente novamente." },
+      { erro: "Não foi possível confirmar o pagamento. Tente novamente." },
       { status: 500 }
     );
   }

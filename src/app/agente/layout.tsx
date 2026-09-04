@@ -25,6 +25,11 @@ export default async function LayoutAgente({ children }: { children: ReactNode }
               <Link href="/agente/perfil" className="hover:text-sky-700">
                 Perfil
               </Link>
+              {sessao.user.isAdmin && (
+                <Link href="/admin" className="hover:text-sky-700">
+                  Admin
+                </Link>
+              )}
             </nav>
           </div>
           <div className="flex items-center gap-3">

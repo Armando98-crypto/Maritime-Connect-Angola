@@ -6,6 +6,10 @@ import { Button } from "@/components/ui/Button";
 export default async function PaginaInicial() {
   const sessao = await auth();
 
+  if (sessao?.user?.isAdmin) {
+    redirect("/admin");
+  }
+
   if (sessao?.user?.papel === "ARMADOR") {
     redirect("/armador/dashboard");
   }

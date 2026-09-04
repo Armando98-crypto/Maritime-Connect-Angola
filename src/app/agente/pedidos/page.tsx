@@ -8,7 +8,6 @@ import {
 import { listarAvaliacoesRecebidas } from "@/servicos/avaliacaoServico";
 import { listarComissoesDoAgente } from "@/servicos/comissaoServico";
 import { Button } from "@/components/ui/Button";
-import { PagamentoComissao } from "./PagamentoComissao";
 import { BuscaPedidos } from "./BuscaPedidos";
 
 const rotuloEstadoProposta: Record<string, string> = {
@@ -190,8 +189,9 @@ export default async function PaginaQuadroPedidos({
         <section className="mt-10">
           <h2 className="text-xl font-semibold text-slate-900">As minhas comissões</h2>
           <p className="mt-1 text-sm text-slate-600">
-            Comissão da plataforma sobre o valor da proposta aceite, a pagar
-            após a prestação do serviço.
+            Comissão da plataforma sobre o valor da proposta aceite. O
+            estado passa a &quot;paga&quot; quando a plataforma confirmar o
+            pagamento.
           </p>
           <ul className="mt-3 flex flex-col gap-3">
             {comissoes.map((comissao) => (
@@ -211,12 +211,9 @@ export default async function PaginaQuadroPedidos({
                     </p>
                   </div>
                   {comissao.estado === "PENDENTE" ? (
-                    <div className="flex flex-col items-end gap-2">
-                      <span className="whitespace-nowrap rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
-                        Pendente
-                      </span>
-                      <PagamentoComissao comissaoId={comissao.id} />
-                    </div>
+                    <span className="whitespace-nowrap rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
+                      Pendente
+                    </span>
                   ) : (
                     <span className="whitespace-nowrap rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-800">
                       Paga

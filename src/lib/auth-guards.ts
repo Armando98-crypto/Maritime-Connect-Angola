@@ -22,8 +22,7 @@ export async function exigirSessaoArmador() {
 }
 
 /**
- * Equivalente para o papel AGENTE — já preparado para a fatia 3, ainda
- * que não usado nesta fatia.
+ * Equivalente para o papel AGENTE.
  */
 export async function exigirSessaoAgente() {
   const sessao = await auth();
@@ -33,6 +32,24 @@ export async function exigirSessaoAgente() {
   }
 
   if (sessao.user.papel !== "AGENTE") {
+    redirect("/");
+  }
+
+  return sessao;
+}
+
+/**
+ * Garante que existe sessão activa e que o utilizador é administrador da
+ * plataforma (isAdmin). Usado no layout do grupo de rotas (admin).
+ */
+export async function exigirSessaoAdmin() {
+  const sessao = await auth();
+
+  if (!sessao?.user) {
+    redirect("/login");
+  }
+
+  if (!sessao.user.isAdmin) {
     redirect("/");
   }
 

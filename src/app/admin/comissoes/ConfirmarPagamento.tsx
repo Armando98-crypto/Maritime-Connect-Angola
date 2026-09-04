@@ -5,27 +5,27 @@ import { useRouter } from "next/navigation";
 import { Button } from "@/components/ui/Button";
 import { ErroFormulario } from "@/components/estado/Alertas";
 
-interface PagamentoComissaoProps {
+interface ConfirmarPagamentoProps {
   comissaoId: string;
 }
 
-export function PagamentoComissao({ comissaoId }: PagamentoComissaoProps) {
+export function ConfirmarPagamento({ comissaoId }: ConfirmarPagamentoProps) {
   const router = useRouter();
   const [aCarregar, setACarregar] = useState(false);
   const [erroGeral, setErroGeral] = useState<string | null>(null);
 
-  async function pagar() {
+  async function confirmar() {
     setACarregar(true);
     setErroGeral(null);
 
     try {
-      const resposta = await fetch(`/api/comissoes/${comissaoId}/pagar`, {
+      const resposta = await fetch(`/api/admin/comissoes/${comissaoId}/pagar`, {
         method: "POST",
       });
 
       if (!resposta.ok) {
         const corpo = await resposta.json().catch(() => null);
-        setErroGeral(corpo?.erro ?? "Não foi possível marcar a comissão como paga.");
+        setErroGeral(corpo?.erro ?? "Não foi possível confirmar o pagamento.");
         return;
       }
 
@@ -40,10 +40,12 @@ export function PagamentoComissao({ comissaoId }: PagamentoComissaoProps) {
   }
 
   return (
-    <div>
-      {erroGeral && <ErroFormulario mensagem={erroGeral} aoTentarNovamente={pagar} />}
-      <Button variante="secundario" aCarregar={aCarregar} onClick={pagar}>
-        Marcar como paga
+    <div className="flex flex-col items-end gap-2">
+      {erroGeral && (
+        <ErroFormulario mensagem={erroGeral} aoTentarNovamente={confirmar} />
+      )}
+      <Button variante="secundario" aCarregar={aCarregar} onClick={confirmar}>
+        Confirmar pagamento
       </Button>
     </div>
   );
