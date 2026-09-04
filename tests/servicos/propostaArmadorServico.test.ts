@@ -8,6 +8,7 @@ const mockPropostaUpdate = vi.fn();
 const mockPropostaUpdateMany = vi.fn();
 const mockPedidoUpdate = vi.fn();
 const mockComissaoCreate = vi.fn();
+const mockNotificacaoCreate = vi.fn();
 const mockTransaction = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
@@ -25,6 +26,9 @@ vi.mock("@/lib/prisma", () => ({
     },
     comissao: {
       create: (...args: unknown[]) => mockComissaoCreate(...args),
+    },
+    notificacao: {
+      create: (...args: unknown[]) => mockNotificacaoCreate(...args),
     },
     $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
@@ -45,6 +49,7 @@ const pedidoDoArmador = {
   armadorId: "armador_1",
   estado: "ABERTO",
   propostaAceiteId: null,
+  navio: "Libra",
 };
 
 function resetMocks() {
@@ -54,6 +59,7 @@ function resetMocks() {
   mockPropostaUpdateMany.mockReset();
   mockPedidoUpdate.mockReset();
   mockComissaoCreate.mockReset();
+  mockNotificacaoCreate.mockReset();
   mockTransaction.mockReset();
   mockPedidoFindMany.mockReset();
   mockPropostaFindMany.mockReset();
@@ -69,6 +75,7 @@ describe("aceitarProposta", () => {
       pedidoId: "pedido_1",
       estado: "PENDENTE",
       preco: 100_000,
+      agenteId: "agente_1",
     });
     // Os passos da transacção são promises Prisma; mockamo-los (o que
     // importa são os argumentos passados a cada passo).
@@ -76,6 +83,7 @@ describe("aceitarProposta", () => {
     mockPropostaUpdateMany.mockResolvedValue({});
     mockPedidoUpdate.mockResolvedValue({});
     mockComissaoCreate.mockResolvedValue({});
+    mockNotificacaoCreate.mockResolvedValue({});
     mockTransaction.mockResolvedValue([{}, {}, {}, {}]);
 
     await aceitarProposta("pedido_1", "proposta_1", "armador_1");
@@ -106,6 +114,16 @@ describe("aceitarProposta", () => {
         valorBase: 100_000,
         percentagem: 10,
         valorComissao: 10_000,
+      },
+    });
+    // notificação ao agente
+    expect(mockNotificacaoCreate).toHaveBeenCalledWith({
+      data: {
+        userId: "agente_1",
+        tipo: "PROPOSTA_ACEITE",
+        titulo: "Proposta aceite",
+        mensagem: 'A sua proposta para o pedido "Libra" foi aceite pelo armador.',
+        pedidoId: "pedido_1",
       },
     });
   });
@@ -187,14 +205,16 @@ describe("aceitarProposta", () => {
 describe("recusarProposta", () => {
   beforeEach(resetMocks);
 
-  it("recusa a proposta pendente", async () => {
+  it("recusa a proposta pendente e notifica o agente", async () => {
     mockPedidoFindUnique.mockResolvedValue(pedidoDoArmador);
     mockPropostaFindUnique.mockResolvedValue({
       id: "proposta_1",
       pedidoId: "pedido_1",
       estado: "PENDENTE",
+      agenteId: "agente_1",
     });
     mockPropostaUpdate.mockResolvedValue({});
+    mockNotificacaoCreate.mockResolvedValue({});
 
     await recusarProposta("pedido_1", "proposta_1", "armador_1");
 
@@ -202,16 +222,27 @@ describe("recusarProposta", () => {
       where: { id: "proposta_1" },
       data: { estado: "RECUSADA" },
     });
+    expect(mockNotificacaoCreate).toHaveBeenCalledWith({
+      data: {
+        userId: "agente_1",
+        tipo: "PROPOSTA_RECUSADA",
+        titulo: "Proposta recusada",
+        mensagem: 'A sua proposta para o pedido "Libra" foi recusada pelo armador.',
+        pedidoId: "pedido_1",
+      },
+    });
   });
 
-  it("não mexe no pedido (não usa transacção tripla)", async () => {
+  it("não usa transacção (recusa é operação isolada)", async () => {
     mockPedidoFindUnique.mockResolvedValue(pedidoDoArmador);
     mockPropostaFindUnique.mockResolvedValue({
       id: "proposta_1",
       pedidoId: "pedido_1",
       estado: "PENDENTE",
+      agenteId: "agente_1",
     });
     mockPropostaUpdate.mockResolvedValue({});
+    mockNotificacaoCreate.mockResolvedValue({});
 
     await recusarProposta("pedido_1", "proposta_1", "armador_1");
 

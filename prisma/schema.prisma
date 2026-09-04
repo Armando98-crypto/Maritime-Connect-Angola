@@ -30,6 +30,12 @@ enum EstadoComissao {
   PAGA
 }
 
+enum TipoNotificacao {
+  PROPOSTA_RECEBIDA
+  PROPOSTA_ACEITE
+  PROPOSTA_RECUSADA
+}
+
 model User {
   id           String   @id @default(cuid())
   nome         String
@@ -43,6 +49,7 @@ model User {
   pedidos      Pedido[]    @relation("PedidosDoArmador")
   propostas    Proposta[]
   avaliacoes   Avaliacao[]
+  notificacoes Notificacao[]
 
   @@map("users")
 }
@@ -73,6 +80,7 @@ model Pedido {
   propostaAceite Proposta?  @relation("PropostaAceite", fields: [propostaAceiteId], references: [id])
   comissao       Comissao?
   avaliacao      Avaliacao?
+  notificacoes   Notificacao[]
 
   @@index([estado])
   @@map("pedidos")
@@ -122,4 +130,21 @@ model Avaliacao {
   agente User   @relation(fields: [agenteId], references: [id])
 
   @@map("avaliacoes")
+}
+
+model Notificacao {
+  id       String          @id @default(cuid())
+  userId   String
+  tipo     TipoNotificacao
+  titulo   String
+  mensagem String
+  lida     Boolean         @default(false)
+  pedidoId String?
+  criadoEm DateTime        @default(now())
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pedido Pedido? @relation(fields: [pedidoId], references: [id])
+
+  @@index([userId, lida])
+  @@map("notificacoes")
 }

@@ -3,6 +3,7 @@ import Link from "next/link";
 import { exigirSessaoAgente } from "@/lib/auth-guards";
 import { signOut } from "@/lib/auth";
 import { Button } from "@/components/ui/Button";
+import { NotificacaoBadge } from "@/components/notificacoes/NotificacaoBadge";
 
 export default async function LayoutAgente({ children }: { children: ReactNode }) {
   const sessao = await exigirSessaoAgente();
@@ -24,6 +25,7 @@ export default async function LayoutAgente({ children }: { children: ReactNode }
             </nav>
           </div>
           <div className="flex items-center gap-3">
+            <NotificacaoBadge href="/agente/notificacoes" />
             <span className="text-sm text-slate-600">{sessao.user.name}</span>
             <form
               action={async () => {

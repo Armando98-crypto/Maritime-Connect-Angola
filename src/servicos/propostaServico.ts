@@ -1,6 +1,7 @@
 import { prisma } from "@/lib/prisma";
 import type { CriarPropostaInput } from "@/lib/validacoes/proposta";
 import { PERCENTAGEM_COMISSAO, calcularValorComissao } from "./comissaoServico";
+import { criarNotificacao } from "./notificacaoServico";
 
 /**
  * O pedido não existe, não está aberto (já foi atribuído/concluído/
@@ -117,7 +118,7 @@ export async function criarProposta(
     throw new PropostaDuplicadaError();
   }
 
-  return prisma.proposta.create({
+  const proposta = await prisma.proposta.create({
     data: {
       pedidoId: dados.pedidoId,
       agenteId,
@@ -125,6 +126,16 @@ export async function criarProposta(
       prazoDias: dados.prazoDias,
     },
   });
+
+  await criarNotificacao({
+    userId: pedido.armadorId,
+    tipo: "PROPOSTA_RECEBIDA",
+    titulo: "Nova proposta recebida",
+    mensagem: `Um agente enviou uma proposta para o pedido "${pedido.navio}".`,
+    pedidoId: pedido.id,
+  });
+
+  return proposta;
 }
 
 /**
@@ -257,7 +268,7 @@ export async function aceitarProposta(
 ) {
   const pedido = await prisma.pedido.findUnique({
     where: { id: pedidoId },
-    select: { id: true, armadorId: true, estado: true, propostaAceiteId: true },
+    select: { id: true, armadorId: true, estado: true, propostaAceiteId: true, navio: true },
   });
 
   if (!pedido) {
@@ -274,7 +285,7 @@ export async function aceitarProposta(
 
   const proposta = await prisma.proposta.findUnique({
     where: { id: propostaId },
-    select: { id: true, pedidoId: true, estado: true, preco: true },
+    select: { id: true, pedidoId: true, estado: true, preco: true, agenteId: true },
   });
 
   if (!proposta || proposta.pedidoId !== pedidoId) {
@@ -287,7 +298,7 @@ export async function aceitarProposta(
 
   const valorBase = Number(proposta.preco);
 
-  return prisma.$transaction([
+  const resultado = await prisma.$transaction([
     prisma.proposta.update({
       where: { id: propostaId },
       data: { estado: "ACEITE" },
@@ -309,6 +320,16 @@ export async function aceitarProposta(
       },
     }),
   ]);
+
+  await criarNotificacao({
+    userId: proposta.agenteId,
+    tipo: "PROPOSTA_ACEITE",
+    titulo: "Proposta aceite",
+    mensagem: `A sua proposta para o pedido "${pedido.navio}" foi aceite pelo armador.`,
+    pedidoId,
+  });
+
+  return resultado;
 }
 
 /**
@@ -322,7 +343,7 @@ export async function recusarProposta(
 ) {
   const pedido = await prisma.pedido.findUnique({
     where: { id: pedidoId },
-    select: { id: true, armadorId: true, estado: true, propostaAceiteId: true },
+    select: { id: true, armadorId: true, estado: true, propostaAceiteId: true, navio: true },
   });
 
   if (!pedido) {
@@ -339,7 +360,7 @@ export async function recusarProposta(
 
   const proposta = await prisma.proposta.findUnique({
     where: { id: propostaId },
-    select: { id: true, pedidoId: true, estado: true },
+    select: { id: true, pedidoId: true, estado: true, agenteId: true },
   });
 
   if (!proposta || proposta.pedidoId !== pedidoId) {
@@ -350,8 +371,18 @@ export async function recusarProposta(
     throw new PropostaJaDecididaError();
   }
 
-  return prisma.proposta.update({
+  const resultado = await prisma.proposta.update({
     where: { id: propostaId },
     data: { estado: "RECUSADA" },
   });
+
+  await criarNotificacao({
+    userId: proposta.agenteId,
+    tipo: "PROPOSTA_RECUSADA",
+    titulo: "Proposta recusada",
+    mensagem: `A sua proposta para o pedido "${pedido.navio}" foi recusada pelo armador.`,
+    pedidoId,
+  });
+
+  return resultado;
 }

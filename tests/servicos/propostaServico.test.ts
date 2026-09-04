@@ -6,6 +6,7 @@ const mockPedidoFindMany = vi.fn();
 const mockPropostaCreate = vi.fn();
 const mockPropostaFindFirst = vi.fn();
 const mockPropostaFindMany = vi.fn();
+const mockNotificacaoCreate = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
@@ -18,6 +19,9 @@ vi.mock("@/lib/prisma", () => ({
       create: (...args: unknown[]) => mockPropostaCreate(...args),
       findFirst: (...args: unknown[]) => mockPropostaFindFirst(...args),
       findMany: (...args: unknown[]) => mockPropostaFindMany(...args),
+    },
+    notificacao: {
+      create: (...args: unknown[]) => mockNotificacaoCreate(...args),
     },
   },
 }));
@@ -37,6 +41,7 @@ const pedidoAberto = {
   armadorId: "armador_1",
   estado: "ABERTO",
   propostaAceiteId: null,
+  navio: "Libra",
 };
 
 function dadosValidos() {
@@ -48,12 +53,14 @@ describe("criarProposta", () => {
     mockPedidoFindUnique.mockReset();
     mockPropostaFindFirst.mockReset();
     mockPropostaCreate.mockReset();
+    mockNotificacaoCreate.mockReset();
   });
 
-  it("cria a proposta quando o pedido está aberto e sem proposta aceite", async () => {
+  it("cria a proposta e notifica o armador quando o pedido está aberto e sem proposta aceite", async () => {
     mockPedidoFindUnique.mockResolvedValue(pedidoAberto);
     mockPropostaFindFirst.mockResolvedValue(null);
     mockPropostaCreate.mockResolvedValue({ id: "proposta_1" });
+    mockNotificacaoCreate.mockResolvedValue({});
 
     await criarProposta("agente_1", dadosValidos());
 
@@ -63,6 +70,15 @@ describe("criarProposta", () => {
         agenteId: "agente_1",
         preco: 250_000,
         prazoDias: 5,
+      },
+    });
+    expect(mockNotificacaoCreate).toHaveBeenCalledWith({
+      data: {
+        userId: "armador_1",
+        tipo: "PROPOSTA_RECEBIDA",
+        titulo: "Nova proposta recebida",
+        mensagem: 'Um agente enviou uma proposta para o pedido "Libra".',
+        pedidoId: "pedido_1",
       },
     });
   });
