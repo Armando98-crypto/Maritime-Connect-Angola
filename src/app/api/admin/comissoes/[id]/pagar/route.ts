@@ -4,6 +4,7 @@ import { confirmarPagamentoComissao } from "@/servicos/adminServico";
 import {
   ComissaoNaoEncontradaError,
   ComissaoJaPagaError,
+  ComissaoSemComprovativoError,
 } from "@/servicos/comissaoServico";
 
 export async function POST(
@@ -34,6 +35,9 @@ export async function POST(
     }
     if (erro instanceof ComissaoJaPagaError) {
       return NextResponse.json({ erro: erro.message }, { status: 409 });
+    }
+    if (erro instanceof ComissaoSemComprovativoError) {
+      return NextResponse.json({ erro: erro.message }, { status: 422 });
     }
     console.error("Erro inesperado ao confirmar pagamento da comissão:", erro);
     return NextResponse.json(

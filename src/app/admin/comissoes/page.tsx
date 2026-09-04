@@ -56,18 +56,43 @@ export default async function PaginaComissoes() {
                     </p>
                   </div>
                   <div className="flex flex-col items-end gap-2">
-                    {comissao.estado === "PENDENTE" ? (
-                      <>
+                    <div className="flex items-center gap-2">
+                      {comissao.estado === "PENDENTE" ? (
                         <span className="whitespace-nowrap rounded-full bg-amber-100 px-2.5 py-1 text-xs font-medium text-amber-800">
                           Pendente
                         </span>
-                        <ConfirmarPagamento comissaoId={comissao.id} />
-                      </>
-                    ) : (
-                      <span className="whitespace-nowrap rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-800">
-                        Paga
-                      </span>
+                      ) : (
+                        <span className="whitespace-nowrap rounded-full bg-green-100 px-2.5 py-1 text-xs font-medium text-green-800">
+                          Paga
+                        </span>
+                      )}
+                      {comissao.comprovativoNome ? (
+                        <span className="whitespace-nowrap rounded-full bg-sky-100 px-2.5 py-1 text-xs font-medium text-sky-800">
+                          Comprovativo
+                        </span>
+                      ) : (
+                        <span className="whitespace-nowrap rounded-full bg-slate-100 px-2.5 py-1 text-xs font-medium text-slate-600">
+                          Sem comprovativo
+                        </span>
+                      )}
+                    </div>
+                    {comissao.comprovativoNome && (
+                      <a
+                        href={`/api/admin/comissoes/${comissao.id}/comprovativo`}
+                        className="text-sm font-medium text-sky-700 hover:underline"
+                      >
+                        Descarregar comprovativo
+                      </a>
                     )}
+                    {comissao.estado === "PENDENTE" &&
+                      (comissao.comprovativoNome ? (
+                        <ConfirmarPagamento comissaoId={comissao.id} />
+                      ) : (
+                        <p className="max-w-56 text-right text-xs text-slate-500">
+                          Sem comprovativo — o agente deve anexar a prova antes
+                          de poder confirmar.
+                        </p>
+                      ))}
                   </div>
                 </div>
               </li>

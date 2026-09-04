@@ -105,13 +105,17 @@ model Proposta {
 }
 
 model Comissao {
-  id            String         @id @default(cuid())
-  pedidoId      String         @unique
-  valorBase     Decimal        @db.Decimal(12, 2)
-  percentagem   Decimal        @db.Decimal(4, 2)
-  valorComissao Decimal        @db.Decimal(12, 2)
-  estado        EstadoComissao @default(PENDENTE)
-  criadoEm      DateTime       @default(now())
+  id                  String         @id @default(cuid())
+  pedidoId            String         @unique
+  valorBase           Decimal        @db.Decimal(12, 2)
+  percentagem         Decimal        @db.Decimal(4, 2)
+  valorComissao       Decimal        @db.Decimal(12, 2)
+  estado              EstadoComissao @default(PENDENTE)
+  comprovativoNome    String?
+  comprovativoTipo    String?
+  comprovativoTamanho Int?
+  comprovativoDados   Bytes?
+  criadoEm            DateTime       @default(now())
 
   pedido Pedido @relation(fields: [pedidoId], references: [id])
 

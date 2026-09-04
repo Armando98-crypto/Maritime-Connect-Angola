@@ -1,5 +1,9 @@
 import { prisma } from "@/lib/prisma";
-import { ComissaoNaoEncontradaError, ComissaoJaPagaError } from "./comissaoServico";
+import {
+  ComissaoNaoEncontradaError,
+  ComissaoJaPagaError,
+  ComissaoSemComprovativoError,
+} from "./comissaoServico";
 
 /**
  * O utilizador tentou aceder a uma área de administração sem ser admin.
@@ -86,6 +90,7 @@ export async function listarComissoes() {
       percentagem: true,
       valorComissao: true,
       estado: true,
+      comprovativoNome: true,
       criadoEm: true,
       pedido: {
         select: {
@@ -108,12 +113,14 @@ export async function listarComissoes() {
 
 /**
  * Confirma o recebimento de uma comissão. É o administrador da
- * plataforma que confirma — não o agente (que é quem deve).
+ * plataforma que confirma — não o agente (que é quem deve). Para haver
+ * credibilidade, a comissão só pode ser confirmada depois de o agente
+ * anexar o comprovativo de pagamento.
  */
 export async function confirmarPagamentoComissao(comissaoId: string) {
   const comissao = await prisma.comissao.findUnique({
     where: { id: comissaoId },
-    select: { id: true, estado: true },
+    select: { id: true, estado: true, comprovativoNome: true },
   });
 
   if (!comissao) {
@@ -124,10 +131,39 @@ export async function confirmarPagamentoComissao(comissaoId: string) {
     throw new ComissaoJaPagaError();
   }
 
+  if (!comissao.comprovativoNome) {
+    throw new ComissaoSemComprovativoError();
+  }
+
   return prisma.comissao.update({
     where: { id: comissaoId },
     data: { estado: "PAGA" },
   });
+}
+
+/**
+ * Devolve o comprovativo anexado a uma comissão (bytes + metadados),
+ * para o administrador verificar/descarregar antes de confirmar.
+ */
+export async function obterComprovativoComissao(comissaoId: string) {
+  const comissao = await prisma.comissao.findUnique({
+    where: { id: comissaoId },
+    select: {
+      comprovativoNome: true,
+      comprovativoTipo: true,
+      comprovativoDados: true,
+    },
+  });
+
+  if (!comissao) {
+    throw new ComissaoNaoEncontradaError();
+  }
+
+  if (!comissao.comprovativoDados) {
+    throw new ComissaoSemComprovativoError();
+  }
+
+  return comissao;
 }
 
 /**

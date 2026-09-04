@@ -1,11 +1,19 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
+const mockPedidoFindUnique = vi.fn();
 const mockPedidoFindMany = vi.fn();
+const mockComissaoFindUnique = vi.fn();
+const mockComissaoUpdate = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     pedido: {
+      findUnique: (...args: unknown[]) => mockPedidoFindUnique(...args),
       findMany: (...args: unknown[]) => mockPedidoFindMany(...args),
+    },
+    comissao: {
+      findUnique: (...args: unknown[]) => mockComissaoFindUnique(...args),
+      update: (...args: unknown[]) => mockComissaoUpdate(...args),
     },
   },
 }));
@@ -14,10 +22,17 @@ const {
   calcularValorComissao,
   PERCENTAGEM_COMISSAO,
   listarComissoesDoAgente,
+  anexarComprovativo,
+  ComissaoNaoEncontradaError,
+  ComissaoJaPagaError,
+  SemPermissaoComissaoError,
 } = await import("@/servicos/comissaoServico");
 
 function resetMocks() {
+  mockPedidoFindUnique.mockReset();
   mockPedidoFindMany.mockReset();
+  mockComissaoFindUnique.mockReset();
+  mockComissaoUpdate.mockReset();
 }
 
 describe("calcularValorComissao", () => {
@@ -73,5 +88,91 @@ describe("listarComissoesDoAgente", () => {
     mockPedidoFindMany.mockResolvedValue([]);
 
     await expect(listarComissoesDoAgente("agente_1")).resolves.toEqual([]);
+  });
+});
+
+describe("anexarComprovativo", () => {
+  const comprovativo = {
+    nome: "comprovativo.pdf",
+    tipo: "application/pdf",
+    tamanho: 2048,
+    dados: Buffer.from([1, 2, 3]),
+  };
+
+  beforeEach(resetMocks);
+
+  it("anexa o comprovativo a uma comissão PENDENTE do agente dono", async () => {
+    mockComissaoFindUnique.mockResolvedValue({
+      id: "com_1",
+      pedidoId: "pedido_1",
+      estado: "PENDENTE",
+    });
+    mockPedidoFindUnique.mockResolvedValue({
+      propostaAceite: { agenteId: "agente_1" },
+    });
+    mockComissaoUpdate.mockResolvedValue({});
+
+    await anexarComprovativo("com_1", "agente_1", comprovativo);
+
+    const chamada = mockComissaoUpdate.mock.calls[0][0] as {
+      where: { id: string };
+      data: {
+        comprovativoNome: string;
+        comprovativoTipo: string;
+        comprovativoTamanho: number;
+        comprovativoDados: Uint8Array;
+      };
+    };
+
+    expect(chamada.where).toEqual({ id: "com_1" });
+    // Só o conteúdo do comprovativo é copiado (não o buffer pool do Buffer).
+    const { comprovativoDados, ...resto } = chamada.data;
+    expect(resto).toEqual({
+      comprovativoNome: comprovativo.nome,
+      comprovativoTipo: comprovativo.tipo,
+      comprovativoTamanho: comprovativo.tamanho,
+    });
+    expect(Array.from(comprovativoDados)).toEqual([1, 2, 3]);
+  });
+
+  it("lança ComissaoNaoEncontradaError se a comissão não existe", async () => {
+    mockComissaoFindUnique.mockResolvedValue(null);
+
+    await expect(
+      anexarComprovativo("com_x", "agente_1", comprovativo)
+    ).rejects.toBeInstanceOf(ComissaoNaoEncontradaError);
+    expect(mockComissaoUpdate).not.toHaveBeenCalled();
+  });
+
+  it("lança SemPermissaoComissaoError se o agente não é o dono", async () => {
+    mockComissaoFindUnique.mockResolvedValue({
+      id: "com_1",
+      pedidoId: "pedido_1",
+      estado: "PENDENTE",
+    });
+    mockPedidoFindUnique.mockResolvedValue({
+      propostaAceite: { agenteId: "outro_agente" },
+    });
+
+    await expect(
+      anexarComprovativo("com_1", "agente_1", comprovativo)
+    ).rejects.toBeInstanceOf(SemPermissaoComissaoError);
+    expect(mockComissaoUpdate).not.toHaveBeenCalled();
+  });
+
+  it("lança ComissaoJaPagaError se a comissão já está paga", async () => {
+    mockComissaoFindUnique.mockResolvedValue({
+      id: "com_1",
+      pedidoId: "pedido_1",
+      estado: "PAGA",
+    });
+    mockPedidoFindUnique.mockResolvedValue({
+      propostaAceite: { agenteId: "agente_1" },
+    });
+
+    await expect(
+      anexarComprovativo("com_1", "agente_1", comprovativo)
+    ).rejects.toBeInstanceOf(ComissaoJaPagaError);
+    expect(mockComissaoUpdate).not.toHaveBeenCalled();
   });
 });

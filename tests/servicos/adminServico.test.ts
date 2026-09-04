@@ -33,6 +33,7 @@ const {
   definirVerificacaoLicenca,
   listarComissoes,
   confirmarPagamentoComissao,
+  obterComprovativoComissao,
   obterResumoAdmin,
   AgenteNaoEncontradoError,
 } = await import("@/servicos/adminServico");
@@ -40,6 +41,7 @@ const {
 const {
   ComissaoNaoEncontradaError,
   ComissaoJaPagaError,
+  ComissaoSemComprovativoError,
 } = await import("@/servicos/comissaoServico");
 
 function resetMocks() {
@@ -170,10 +172,11 @@ describe("listarComissoes", () => {
 describe("confirmarPagamentoComissao", () => {
   beforeEach(resetMocks);
 
-  it("marca como PAGA uma comissão PENDENTE", async () => {
+  it("marca como PAGA uma comissão PENDENTE com comprovativo anexado", async () => {
     mockComissaoFindUnique.mockResolvedValue({
       id: "com_1",
       estado: "PENDENTE",
+      comprovativoNome: "comprovativo.pdf",
     });
     mockComissaoUpdate.mockResolvedValue({});
 
@@ -198,12 +201,70 @@ describe("confirmarPagamentoComissao", () => {
     mockComissaoFindUnique.mockResolvedValue({
       id: "com_1",
       estado: "PAGA",
+      comprovativoNome: "comprovativo.pdf",
     });
 
     await expect(confirmarPagamentoComissao("com_1")).rejects.toBeInstanceOf(
       ComissaoJaPagaError
     );
     expect(mockComissaoUpdate).not.toHaveBeenCalled();
+  });
+
+  it("lança ComissaoSemComprovativoError se ainda não há comprovativo", async () => {
+    mockComissaoFindUnique.mockResolvedValue({
+      id: "com_1",
+      estado: "PENDENTE",
+      comprovativoNome: null,
+    });
+
+    await expect(confirmarPagamentoComissao("com_1")).rejects.toBeInstanceOf(
+      ComissaoSemComprovativoError
+    );
+    expect(mockComissaoUpdate).not.toHaveBeenCalled();
+  });
+});
+
+describe("obterComprovativoComissao", () => {
+  beforeEach(resetMocks);
+
+  it("devolve os dados do comprovativo quando existe", async () => {
+    mockComissaoFindUnique.mockResolvedValue({
+      comprovativoNome: "comprovativo.pdf",
+      comprovativoTipo: "application/pdf",
+      comprovativoDados: Buffer.from([1, 2, 3]),
+    });
+
+    const resultado = await obterComprovativoComissao("com_1");
+
+    expect(mockComissaoFindUnique).toHaveBeenCalledWith({
+      where: { id: "com_1" },
+      select: {
+        comprovativoNome: true,
+        comprovativoTipo: true,
+        comprovativoDados: true,
+      },
+    });
+    expect(resultado.comprovativoNome).toBe("comprovativo.pdf");
+  });
+
+  it("lança ComissaoNaoEncontradaError se a comissão não existe", async () => {
+    mockComissaoFindUnique.mockResolvedValue(null);
+
+    await expect(obterComprovativoComissao("com_x")).rejects.toBeInstanceOf(
+      ComissaoNaoEncontradaError
+    );
+  });
+
+  it("lança ComissaoSemComprovativoError se não há dados anexados", async () => {
+    mockComissaoFindUnique.mockResolvedValue({
+      comprovativoNome: null,
+      comprovativoTipo: null,
+      comprovativoDados: null,
+    });
+
+    await expect(obterComprovativoComissao("com_1")).rejects.toBeInstanceOf(
+      ComissaoSemComprovativoError
+    );
   });
 });
 
