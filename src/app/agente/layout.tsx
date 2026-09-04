@@ -22,6 +22,9 @@ export default async function LayoutAgente({ children }: { children: ReactNode }
               <Link href="/agente/pedidos" className="hover:text-sky-700">
                 Pedidos
               </Link>
+              <Link href="/agente/perfil" className="hover:text-sky-700">
+                Perfil
+              </Link>
             </nav>
           </div>
           <div className="flex items-center gap-3">

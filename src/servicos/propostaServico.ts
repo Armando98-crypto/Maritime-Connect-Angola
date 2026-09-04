@@ -146,9 +146,15 @@ export async function criarProposta(
  * Nota: nesta fase o agente vê todos os pedidos abertos. A distinção
  * por nicho/porto fica para uma iteração futura — ver decisão no schema.
  */
-export async function listarPedidosAbertosParaAgente() {
+export async function listarPedidosAbertosParaAgente(busca?: string) {
+  const where: Record<string, unknown> = { estado: "ABERTO" };
+
+  if (busca && busca.trim().length > 0) {
+    where.navio = { contains: busca.trim(), mode: "insensitive" };
+  }
+
   return prisma.pedido.findMany({
-    where: { estado: "ABERTO" },
+    where,
     orderBy: { criadoEm: "desc" },
     include: {
       _count: { select: { propostas: true } },

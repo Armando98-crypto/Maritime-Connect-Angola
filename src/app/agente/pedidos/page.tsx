@@ -1,4 +1,5 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { auth } from "@/lib/auth";
 import {
   listarPedidosAbertosParaAgente,
@@ -8,6 +9,7 @@ import { listarAvaliacoesRecebidas } from "@/servicos/avaliacaoServico";
 import { listarComissoesDoAgente } from "@/servicos/comissaoServico";
 import { Button } from "@/components/ui/Button";
 import { PagamentoComissao } from "./PagamentoComissao";
+import { BuscaPedidos } from "./BuscaPedidos";
 
 const rotuloEstadoProposta: Record<string, string> = {
   PENDENTE: "Pendente",
@@ -33,9 +35,14 @@ const formatadorPreco = new Intl.NumberFormat("pt-PT", {
   maximumFractionDigits: 0,
 });
 
-export default async function PaginaQuadroPedidos() {
+export default async function PaginaQuadroPedidos({
+  searchParams,
+}: {
+  searchParams: Promise<{ q?: string }>;
+}) {
   const sessao = await auth();
-  const pedidos = await listarPedidosAbertosParaAgente();
+  const { q } = await searchParams;
+  const pedidos = await listarPedidosAbertosParaAgente(q);
   const minhasPropostas = await listarPropostasDoAgente(sessao!.user.id);
   const avaliacoes = await listarAvaliacoesRecebidas(sessao!.user.id);
   const comissoes = await listarComissoesDoAgente(sessao!.user.id);
@@ -57,6 +64,10 @@ export default async function PaginaQuadroPedidos() {
           Porto do Namibe. Escolha um pedido para enviar a sua proposta.
         </p>
       </div>
+
+      <Suspense>
+        <BuscaPedidos />
+      </Suspense>
 
       {pedidos.length === 0 ? (
         <div className="rounded-lg border border-dashed border-slate-300 px-6 py-12 text-center">
