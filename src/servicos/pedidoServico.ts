@@ -1,5 +1,6 @@
 import { prisma } from "@/lib/prisma";
 import type { CriarPedidoInput } from "@/lib/validacoes/pedido";
+import { criarNotificacao } from "./notificacaoServico";
 
 /**
  * O armador tentou concluir um pedido que não lhe pertence.
@@ -33,6 +34,17 @@ export class PedidoNaoConcluivelError extends Error {
 }
 
 /**
+ * O pedido não pode ser cancelado (já foi atribuído, concluído ou
+ * já não está aberto).
+ */
+export class PedidoNaoCancelavelError extends Error {
+  constructor() {
+    super("Este pedido não pode ser cancelado.");
+    this.name = "PedidoNaoCancelavelError";
+  }
+}
+
+/**
  * Cria um pedido para o armador indicado. O estado começa sempre em
  * ABERTO (default do schema) — não há forma de um pedido nascer já
  * ATRIBUIDO ou CONCLUIDO.
@@ -57,9 +69,15 @@ export async function criarPedido(armadorId: string, dados: CriarPedidoInput) {
  * quantas propostas cada um já recebeu — informação útil para o
  * armador perceber, de relance, se algum pedido precisa de atenção.
  */
-export async function listarPedidosDoArmador(armadorId: string) {
+export async function listarPedidosDoArmador(armadorId: string, filtroEstado?: string) {
+  const where: Record<string, unknown> = { armadorId };
+
+  if (filtroEstado && ["ABERTO", "ATRIBUIDO", "CONCLUIDO", "CANCELADO"].includes(filtroEstado)) {
+    where.estado = filtroEstado;
+  }
+
   const pedidos = await prisma.pedido.findMany({
-    where: { armadorId },
+    where,
     orderBy: { criadoEm: "desc" },
     include: {
       _count: { select: { propostas: true } },
@@ -96,4 +114,58 @@ export async function concluirPedido(pedidoId: string, armadorId: string) {
     where: { id: pedidoId },
     data: { estado: "CONCLUIDO" },
   });
+}
+
+/**
+ * Cancela um pedido. Só é possível enquanto estiver ABERTO (sem
+ * proposta aceite). As propostas pendentes dos agentes passam a
+ * RECUSADA, e cada agente é notificado.
+ */
+export async function cancelarPedido(pedidoId: string, armadorId: string) {
+  const pedido = await prisma.pedido.findUnique({
+    where: { id: pedidoId },
+    select: { id: true, armadorId: true, estado: true, navio: true },
+  });
+
+  if (!pedido) {
+    throw new PedidoNaoEncontradoError();
+  }
+
+  if (pedido.armadorId !== armadorId) {
+    throw new SemPermissaoPedidoError();
+  }
+
+  if (pedido.estado !== "ABERTO") {
+    throw new PedidoNaoCancelavelError();
+  }
+
+  const propostasPendentes = await prisma.proposta.findMany({
+    where: { pedidoId, estado: "PENDENTE" },
+    select: { id: true, agenteId: true },
+  });
+
+  await prisma.$transaction([
+    prisma.pedido.update({
+      where: { id: pedidoId },
+      data: { estado: "CANCELADO" },
+    }),
+    ...(propostasPendentes.length > 0
+      ? [
+          prisma.proposta.updateMany({
+            where: { pedidoId, estado: "PENDENTE" },
+            data: { estado: "RECUSADA" },
+          }),
+        ]
+      : []),
+  ]);
+
+  for (const p of propostasPendentes) {
+    await criarNotificacao({
+      userId: p.agenteId,
+      tipo: "PROPOSTA_RECUSADA",
+      titulo: "Pedido cancelado",
+      mensagem: `O pedido "${pedido.navio}" foi cancelado pelo armador. A sua proposta foi automaticamente recusada.`,
+      pedidoId,
+    });
+  }
 }

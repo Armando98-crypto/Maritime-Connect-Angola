@@ -6,6 +6,7 @@ import { Button } from "@/components/ui/Button";
 import { GestorPropostas } from "./GestorPropostas";
 import { ConcluirPedido } from "./ConcluirPedido";
 import { AvaliarPedido } from "./AvaliarPedido";
+import { CancelarPedido } from "./CancelarPedido";
 
 interface Parametros {
   params: Promise<{ id: string }>;
@@ -105,6 +106,12 @@ export default async function PaginaGestaoPedido({ params }: Parametros) {
         <div className="mt-8 rounded-lg border border-slate-200 px-4 py-3 text-sm text-slate-600">
           Ao aceitar uma proposta, o pedido passa a <strong>Atribuído</strong> e as
           restantes propostas pendentes são recusadas automaticamente.
+        </div>
+      )}
+
+      {pedido.estado === "ABERTO" && (
+        <div className="mt-4">
+          <CancelarPedido pedidoId={pedido.id} />
         </div>
       )}
 

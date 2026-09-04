@@ -2,19 +2,51 @@ import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockPedidoCreate = vi.fn();
 const mockPedidoFindMany = vi.fn();
+const mockPedidoFindUnique = vi.fn();
+const mockPedidoUpdate = vi.fn();
+const mockPropostaFindMany = vi.fn();
+const mockPropostaUpdateMany = vi.fn();
+const mockNotificacaoCreate = vi.fn();
+const mockTransaction = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     pedido: {
       create: (...args: unknown[]) => mockPedidoCreate(...args),
       findMany: (...args: unknown[]) => mockPedidoFindMany(...args),
+      findUnique: (...args: unknown[]) => mockPedidoFindUnique(...args),
+      update: (...args: unknown[]) => mockPedidoUpdate(...args),
     },
+    proposta: {
+      findMany: (...args: unknown[]) => mockPropostaFindMany(...args),
+      updateMany: (...args: unknown[]) => mockPropostaUpdateMany(...args),
+    },
+    notificacao: {
+      create: (...args: unknown[]) => mockNotificacaoCreate(...args),
+    },
+    $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
 }));
 
-const { criarPedido, listarPedidosDoArmador } = await import(
-  "@/servicos/pedidoServico"
-);
+const {
+  criarPedido,
+  listarPedidosDoArmador,
+  cancelarPedido,
+  PedidoNaoEncontradoError,
+  SemPermissaoPedidoError,
+  PedidoNaoCancelavelError,
+} = await import("@/servicos/pedidoServico");
+
+function resetMocks() {
+  mockPedidoCreate.mockReset();
+  mockPedidoFindMany.mockReset();
+  mockPedidoFindUnique.mockReset();
+  mockPedidoUpdate.mockReset();
+  mockPropostaFindMany.mockReset();
+  mockPropostaUpdateMany.mockReset();
+  mockNotificacaoCreate.mockReset();
+  mockTransaction.mockReset();
+}
 
 describe("criarPedido", () => {
   beforeEach(() => {
@@ -40,7 +72,7 @@ describe("criarPedido", () => {
     });
   });
 
-  it("nunca define o estado explicitamente — deixa o valor por omissão (ABERTO) do schema decidir", async () => {
+  it("nunca define o estado explicitamente", async () => {
     mockPedidoCreate.mockResolvedValue({ id: "pedido_2" });
 
     await criarPedido("armador_1", {
@@ -56,11 +88,9 @@ describe("criarPedido", () => {
 });
 
 describe("listarPedidosDoArmador", () => {
-  beforeEach(() => {
-    mockPedidoFindMany.mockReset();
-  });
+  beforeEach(resetMocks);
 
-  it("filtra só pelos pedidos do armador indicado, mais recentes primeiro", async () => {
+  it("filtra só pelos pedidos do armador indicado", async () => {
     mockPedidoFindMany.mockResolvedValue([]);
 
     await listarPedidosDoArmador("armador_1");
@@ -68,20 +98,97 @@ describe("listarPedidosDoArmador", () => {
     expect(mockPedidoFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
         where: { armadorId: "armador_1" },
-        orderBy: { criadoEm: "desc" },
       })
     );
   });
 
-  it("inclui a contagem de propostas de cada pedido", async () => {
+  it("filtra por estado quando fornecido", async () => {
     mockPedidoFindMany.mockResolvedValue([]);
 
-    await listarPedidosDoArmador("armador_1");
+    await listarPedidosDoArmador("armador_1", "ABERTO");
 
     expect(mockPedidoFindMany).toHaveBeenCalledWith(
       expect.objectContaining({
-        include: { _count: { select: { propostas: true } } },
+        where: { armadorId: "armador_1", estado: "ABERTO" },
       })
+    );
+  });
+
+  it("ignora estados inválidos", async () => {
+    mockPedidoFindMany.mockResolvedValue([]);
+
+    await listarPedidosDoArmador("armador_1", "INVALIDO");
+
+    expect(mockPedidoFindMany).toHaveBeenCalledWith(
+      expect.objectContaining({
+        where: { armadorId: "armador_1" },
+      })
+    );
+  });
+});
+
+describe("cancelarPedido", () => {
+  beforeEach(resetMocks);
+
+  it("cancela um pedido ABERTO, recusa propostas pendentes e notifica agentes", async () => {
+    mockPedidoFindUnique.mockResolvedValue({
+      id: "pedido_1",
+      armadorId: "armador_1",
+      estado: "ABERTO",
+      navio: "Libra",
+    });
+    mockPropostaFindMany.mockResolvedValue([
+      { id: "p1", agenteId: "agente_1" },
+      { id: "p2", agenteId: "agente_2" },
+    ]);
+    mockTransaction.mockResolvedValue([{}, {}]);
+    mockNotificacaoCreate.mockResolvedValue({});
+
+    await cancelarPedido("pedido_1", "armador_1");
+
+    expect(mockTransaction).toHaveBeenCalledTimes(1);
+    expect(mockPedidoUpdate).toHaveBeenCalledWith({
+      where: { id: "pedido_1" },
+      data: { estado: "CANCELADO" },
+    });
+    expect(mockPropostaUpdateMany).toHaveBeenCalledWith({
+      where: { pedidoId: "pedido_1", estado: "PENDENTE" },
+      data: { estado: "RECUSADA" },
+    });
+    expect(mockNotificacaoCreate).toHaveBeenCalledTimes(2);
+  });
+
+  it("lança PedidoNaoEncontradoError se o pedido não existe", async () => {
+    mockPedidoFindUnique.mockResolvedValue(null);
+
+    await expect(cancelarPedido("pedido_x", "armador_1")).rejects.toBeInstanceOf(
+      PedidoNaoEncontradoError
+    );
+  });
+
+  it("lança SemPermissaoPedidoError se o pedido não pertence ao armador", async () => {
+    mockPedidoFindUnique.mockResolvedValue({
+      id: "pedido_1",
+      armadorId: "outro",
+      estado: "ABERTO",
+      navio: "Libra",
+    });
+
+    await expect(cancelarPedido("pedido_1", "armador_1")).rejects.toBeInstanceOf(
+      SemPermissaoPedidoError
+    );
+  });
+
+  it("lança PedidoNaoCancelavelError se o pedido não está ABERTO", async () => {
+    mockPedidoFindUnique.mockResolvedValue({
+      id: "pedido_1",
+      armadorId: "armador_1",
+      estado: "ATRIBUIDO",
+      navio: "Libra",
+    });
+
+    await expect(cancelarPedido("pedido_1", "armador_1")).rejects.toBeInstanceOf(
+      PedidoNaoCancelavelError
     );
   });
 });

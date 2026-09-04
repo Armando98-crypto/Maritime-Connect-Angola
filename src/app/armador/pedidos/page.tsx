@@ -1,7 +1,9 @@
 import Link from "next/link";
+import { Suspense } from "react";
 import { auth } from "@/lib/auth";
 import { listarPedidosDoArmador } from "@/servicos/pedidoServico";
 import { Button } from "@/components/ui/Button";
+import { FiltroPedidos } from "./FiltroPedidos";
 
 const rotuloEstado: Record<string, string> = {
   ABERTO: "Aberto",
@@ -23,12 +25,14 @@ const formatadorData = new Intl.DateTimeFormat("pt-PT", {
   year: "numeric",
 });
 
-export default async function PaginaPedidos() {
-  // O layout do grupo (armador) já garante sessão + papel correcto;
-  // lemos a sessão outra vez aqui só para saber de quem são os pedidos
-  // a listar (é JWT, sem custo extra de rede).
+export default async function PaginaPedidos({
+  searchParams,
+}: {
+  searchParams: Promise<{ estado?: string }>;
+}) {
   const sessao = await auth();
-  const pedidos = await listarPedidosDoArmador(sessao!.user.id);
+  const { estado } = await searchParams;
+  const pedidos = await listarPedidosDoArmador(sessao!.user.id, estado);
 
   return (
     <main className="mx-auto max-w-2xl px-4 py-8">
@@ -39,21 +43,31 @@ export default async function PaginaPedidos() {
         </Link>
       </div>
 
+      <Suspense>
+        <FiltroPedidos />
+      </Suspense>
+
       {pedidos.length === 0 ? (
-        <div className="rounded-lg border border-dashed border-slate-300 px-6 py-12 text-center">
+        <div className="mt-4 rounded-lg border border-dashed border-slate-300 px-6 py-12 text-center">
           <p className="text-slate-600">
-            Ainda não tem nenhum pedido publicado.
+            {estado
+              ? `Não tem pedidos com estado "${rotuloEstado[estado] ?? estado}".`
+              : "Ainda não tem nenhum pedido publicado."}
           </p>
-          <p className="mt-1 text-sm text-slate-500">
-            Publique o primeiro pedido para que os agentes de navegação
-            verificados possam enviar propostas.
-          </p>
-          <Link href="/armador/pedidos/novo" className="mt-4 inline-block">
-            <Button>Publicar o primeiro pedido</Button>
-          </Link>
+          {!estado && (
+            <>
+              <p className="mt-1 text-sm text-slate-500">
+                Publique o primeiro pedido para que os agentes de navegação
+                verificados possam enviar propostas.
+              </p>
+              <Link href="/armador/pedidos/novo" className="mt-4 inline-block">
+                <Button>Publicar o primeiro pedido</Button>
+              </Link>
+            </>
+          )}
         </div>
       ) : (
-        <ul className="flex flex-col gap-3">
+        <ul className="mt-4 flex flex-col gap-3">
           {pedidos.map((pedido) => (
             <li
               key={pedido.id}
