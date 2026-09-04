@@ -4,6 +4,8 @@ import { auth } from "@/lib/auth";
 import { obterPedidoComPropostas } from "@/servicos/propostaServico";
 import { Button } from "@/components/ui/Button";
 import { GestorPropostas } from "./GestorPropostas";
+import { ConcluirPedido } from "./ConcluirPedido";
+import { AvaliarPedido } from "./AvaliarPedido";
 
 interface Parametros {
   params: Promise<{ id: string }>;
@@ -97,6 +99,46 @@ export default async function PaginaGestaoPedido({ params }: Parametros) {
         <div className="mt-8 rounded-lg border border-slate-200 px-4 py-3 text-sm text-slate-600">
           Ao aceitar uma proposta, o pedido passa a <strong>Atribuído</strong> e as
           restantes propostas pendentes são recusadas automaticamente.
+        </div>
+      )}
+
+      {pedido.estado === "ATRIBUIDO" && (
+        <div className="mt-8 rounded-lg border border-slate-200 px-4 py-3">
+          <h2 className="text-xl font-semibold text-slate-900">
+            Serviço concluído?
+          </h2>
+          <p className="mt-1 text-sm text-slate-600">
+            Quando o serviço estiver concluído, marque o pedido como tal para
+            poder avaliar o agente.
+          </p>
+          <ConcluirPedido pedidoId={pedido.id} />
+        </div>
+      )}
+
+      {pedido.estado === "CONCLUIDO" && (
+        <div className="mt-8 rounded-lg border border-slate-200 px-4 py-3">
+          <h2 className="text-xl font-semibold text-slate-900">
+            Avaliar o serviço
+          </h2>
+
+          {pedido.avaliacao ? (
+            <div className="mt-3">
+              <p className="text-sm text-slate-600">
+                Já avaliou este serviço com a nota <strong>{pedido.avaliacao.nota}</strong>.
+              </p>
+              <div className="mt-1 text-base text-sky-700">
+                {"★".repeat(pedido.avaliacao.nota)}
+                {"☆".repeat(5 - pedido.avaliacao.nota)}
+              </div>
+              {pedido.avaliacao.comentario && (
+                <p className="mt-2 rounded-md bg-slate-50 px-3 py-2 text-sm text-slate-700">
+                  {pedido.avaliacao.comentario}
+                </p>
+              )}
+            </div>
+          ) : (
+            <AvaliarPedido pedidoId={pedido.id} navio={pedido.navio} />
+          )}
         </div>
       )}
 

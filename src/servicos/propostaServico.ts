@@ -209,7 +209,10 @@ export async function obterPedidoComPropostas(pedidoId: string, armadorId: strin
   const pedido = await prisma.pedido.findUnique({
     where: { id: pedidoId },
     include: {
-      propostaAceite: { select: { id: true, preco: true, prazoDias: true } },
+      propostaAceite: {
+        select: { id: true, preco: true, prazoDias: true, agenteId: true },
+      },
+      avaliacao: true,
       propostas: {
         orderBy: { criadoEm: "asc" },
         include: {

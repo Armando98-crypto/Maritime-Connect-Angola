@@ -4,6 +4,7 @@ import {
   listarPedidosAbertosParaAgente,
   listarPropostasDoAgente,
 } from "@/servicos/propostaServico";
+import { listarAvaliacoesRecebidas } from "@/servicos/avaliacaoServico";
 import { Button } from "@/components/ui/Button";
 
 const rotuloEstadoProposta: Record<string, string> = {
@@ -34,6 +35,7 @@ export default async function PaginaQuadroPedidos() {
   const sessao = await auth();
   const pedidos = await listarPedidosAbertosParaAgente();
   const minhasPropostas = await listarPropostasDoAgente(sessao!.user.id);
+  const avaliacoes = await listarAvaliacoesRecebidas(sessao!.user.id);
 
   // Marcamos os pedidos para os quais o agente já enviou proposta,
   // para não os voltar a oferecer (e o serviço também bloqueia no
@@ -127,6 +129,43 @@ export default async function PaginaQuadroPedidos() {
                     {rotuloEstadoProposta[proposta.estado]}
                   </span>
                 </div>
+              </li>
+            ))}
+          </ul>
+        </section>
+      )}
+
+      {avaliacoes.length > 0 && (
+        <section className="mt-10">
+          <h2 className="text-xl font-semibold text-slate-900">As minhas avaliações</h2>
+          <p className="mt-1 text-sm text-slate-600">
+            {avaliacoes.length === 1
+              ? "Recebeu 1 avaliação de serviços."
+              : `Recebeu ${avaliacoes.length} avaliações de serviços.`}
+          </p>
+          <ul className="mt-3 flex flex-col gap-3">
+            {avaliacoes.map((avaliacao) => (
+              <li
+                key={avaliacao.id}
+                className="rounded-lg border border-slate-200 px-4 py-3"
+              >
+                <div className="flex items-start justify-between gap-3">
+                  <div>
+                    <p className="font-medium text-slate-900">
+                      {avaliacao.pedido.navio}
+                    </p>
+                    <div className="mt-1 text-base text-sky-700">
+                      {"★".repeat(avaliacao.nota)}
+                      {"☆".repeat(5 - avaliacao.nota)}
+                    </div>
+                  </div>
+                  <span className="whitespace-nowrap text-sm text-slate-500">
+                    {avaliacao.nota}/5
+                  </span>
+                </div>
+                {avaliacao.comentario && (
+                  <p className="mt-2 text-sm text-slate-600">{avaliacao.comentario}</p>
+                )}
               </li>
             ))}
           </ul>
