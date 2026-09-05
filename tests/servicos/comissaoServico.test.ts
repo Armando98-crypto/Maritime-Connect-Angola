@@ -1,4 +1,5 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
+import Decimal from "decimal.js";
 
 const mockPedidoFindUnique = vi.fn();
 const mockPedidoFindMany = vi.fn();
@@ -25,6 +26,7 @@ const {
   anexarComprovativo,
   ComissaoNaoEncontradaError,
   ComissaoJaPagaError,
+  ComprovativoInvalidoError,
   SemPermissaoComissaoError,
 } = await import("@/servicos/comissaoServico");
 
@@ -36,11 +38,25 @@ function resetMocks() {
 }
 
 describe("calcularValorComissao", () => {
-  it("aplica a percentagem fixa ao valor base", () => {
+  it("aplica a percentagem fixa ao valor base, devolvendo sempre um Decimal", () => {
     expect(PERCENTAGEM_COMISSAO).toBe(10);
-    expect(calcularValorComissao(100_000)).toBe(10_000);
-    expect(calcularValorComissao(50_000)).toBe(5_000);
-    expect(calcularValorComissao(12_345.67)).toBe(1234.57);
+    expect(calcularValorComissao(100_000).toString()).toBe("10000");
+    expect(calcularValorComissao(50_000).toString()).toBe("5000");
+    expect(calcularValorComissao(12_345.67).toString()).toBe("1234.57");
+    expect(calcularValorComissao(100_000)).toBeInstanceOf(Decimal);
+  });
+
+  it("não perde precisão em valores onde a aritmética float falharia (regressão do bug de arredondamento)", () => {
+    // Em JavaScript, 19.99 * 10 / 100 dá 1.9990000000000003 (erro de
+    // float). Com Decimal.js, o resultado é exacto.
+    expect(calcularValorComissao(19.99).toString()).toBe("2");
+    expect(calcularValorComissao(0.1).toString()).toBe("0.01");
+    expect(calcularValorComissao(29.99).toString()).toBe("3");
+  });
+
+  it("aceita directamente uma instância Decimal (como as que o Prisma devolve para campos Decimal)", () => {
+    const valorBase = new Decimal("100000.00");
+    expect(calcularValorComissao(valorBase).toString()).toBe("10000");
   });
 });
 
@@ -74,7 +90,6 @@ describe("listarComissoesDoAgente", () => {
       orderBy: { criadoEm: "desc" },
       select: { id: true, navio: true, comissao: true },
     });
-    // O pedido sem comissão não entra na lista; o campo pedidoId é juntado.
     expect(resultado).toHaveLength(1);
     expect(resultado[0]).toMatchObject({
       pedidoId: "pedido_1",
@@ -92,16 +107,23 @@ describe("listarComissoesDoAgente", () => {
 });
 
 describe("anexarComprovativo", () => {
+  // Bytes reais de um cabeçalho de PDF válido -- não basta qualquer
+  // buffer com o Content-Type "application/pdf" declarado.
+  const pdfValido = Buffer.concat([
+    Buffer.from("%PDF-1.4\n"),
+    Buffer.from([1, 2, 3, 4, 5]),
+  ]);
+
   const comprovativo = {
     nome: "comprovativo.pdf",
     tipo: "application/pdf",
-    tamanho: 2048,
-    dados: Buffer.from([1, 2, 3]),
+    tamanho: pdfValido.byteLength,
+    dados: pdfValido,
   };
 
   beforeEach(resetMocks);
 
-  it("anexa o comprovativo a uma comissão PENDENTE do agente dono", async () => {
+  it("anexa o comprovativo a uma comissão PENDENTE do agente dono, quando a assinatura do ficheiro é válida", async () => {
     mockComissaoFindUnique.mockResolvedValue({
       id: "com_1",
       pedidoId: "pedido_1",
@@ -116,23 +138,63 @@ describe("anexarComprovativo", () => {
 
     const chamada = mockComissaoUpdate.mock.calls[0][0] as {
       where: { id: string };
-      data: {
-        comprovativoNome: string;
-        comprovativoTipo: string;
-        comprovativoTamanho: number;
-        comprovativoDados: Uint8Array;
-      };
+      data: { comprovativoNome: string; comprovativoTipo: string };
     };
 
     expect(chamada.where).toEqual({ id: "com_1" });
-    // Só o conteúdo do comprovativo é copiado (não o buffer pool do Buffer).
-    const { comprovativoDados, ...resto } = chamada.data;
-    expect(resto).toEqual({
-      comprovativoNome: comprovativo.nome,
-      comprovativoTipo: comprovativo.tipo,
-      comprovativoTamanho: comprovativo.tamanho,
+    expect(chamada.data.comprovativoNome).toBe(comprovativo.nome);
+    expect(chamada.data.comprovativoTipo).toBe(comprovativo.tipo);
+  });
+
+  it("rejeita um ficheiro cujos bytes não correspondem ao tipo declarado (Content-Type falsificado) — não confia só no que o browser diz", async () => {
+    const ficheiroDisfarcado = {
+      nome: "nao-e-um-pdf.pdf",
+      tipo: "application/pdf",
+      tamanho: 5,
+      // Bytes arbitrários, sem qualquer assinatura de PDF real.
+      dados: Buffer.from([0x00, 0x01, 0x02, 0x03, 0x04]),
+    };
+
+    await expect(
+      anexarComprovativo("com_1", "agente_1", ficheiroDisfarcado)
+    ).rejects.toBeInstanceOf(ComprovativoInvalidoError);
+    expect(mockComissaoFindUnique).not.toHaveBeenCalled();
+    expect(mockComissaoUpdate).not.toHaveBeenCalled();
+  });
+
+  it("aceita PNG, JPEG e WebP com a assinatura de bytes correcta", async () => {
+    mockComissaoFindUnique.mockResolvedValue({
+      id: "com_1",
+      pedidoId: "pedido_1",
+      estado: "PENDENTE",
     });
-    expect(Array.from(comprovativoDados)).toEqual([1, 2, 3]);
+    mockPedidoFindUnique.mockResolvedValue({
+      propostaAceite: { agenteId: "agente_1" },
+    });
+    mockComissaoUpdate.mockResolvedValue({});
+
+    const png = {
+      nome: "c.png",
+      tipo: "image/png",
+      tamanho: 12,
+      dados: Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a, 0, 0, 0, 0]),
+    };
+    const jpeg = {
+      nome: "c.jpg",
+      tipo: "image/jpeg",
+      tamanho: 12,
+      dados: Buffer.from([0xff, 0xd8, 0xff, 0, 0, 0, 0, 0, 0, 0, 0, 0]),
+    };
+    const webp = {
+      nome: "c.webp",
+      tipo: "image/webp",
+      tamanho: 12,
+      dados: Buffer.concat([Buffer.from("RIFF"), Buffer.from([0, 0, 0, 0]), Buffer.from("WEBP")]),
+    };
+
+    await expect(anexarComprovativo("com_1", "agente_1", png)).resolves.toBeDefined();
+    await expect(anexarComprovativo("com_1", "agente_1", jpeg)).resolves.toBeDefined();
+    await expect(anexarComprovativo("com_1", "agente_1", webp)).resolves.toBeDefined();
   });
 
   it("lança ComissaoNaoEncontradaError se a comissão não existe", async () => {

@@ -4,6 +4,7 @@ import {
   anexarComprovativo,
   ComissaoNaoEncontradaError,
   ComissaoJaPagaError,
+  ComprovativoInvalidoError,
   SemPermissaoComissaoError,
   TAMANHO_MAXIMO_COMPROVATIVO,
   TIPOS_COMPROVATIVO_PERMITIDOS,
@@ -66,6 +67,9 @@ export async function POST(
     });
     return NextResponse.json({ ok: true });
   } catch (erro) {
+    if (erro instanceof ComprovativoInvalidoError) {
+      return NextResponse.json({ erro: erro.message }, { status: 400 });
+    }
     if (erro instanceof ComissaoNaoEncontradaError) {
       return NextResponse.json({ erro: erro.message }, { status: 404 });
     }

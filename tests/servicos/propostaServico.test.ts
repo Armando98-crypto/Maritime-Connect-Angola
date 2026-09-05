@@ -1,28 +1,45 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
-const mockPedidoFindUnique = vi.fn();
-const mockPedidoFindFirst = vi.fn();
+class PrismaClientKnownRequestErrorSimulado extends Error {
+  code: string;
+  meta?: Record<string, unknown>;
+  constructor(message: string, opts: { code: string; meta?: Record<string, unknown> }) {
+    super(message);
+    this.name = "PrismaClientKnownRequestError";
+    this.code = opts.code;
+    this.meta = opts.meta;
+  }
+}
+
+vi.mock("@prisma/client", () => ({
+  Prisma: {
+    PrismaClientKnownRequestError: PrismaClientKnownRequestErrorSimulado,
+  },
+}));
+
+const mockPerfilAgenteFindUnique = vi.fn();
 const mockPedidoFindMany = vi.fn();
-const mockPropostaCreate = vi.fn();
-const mockPropostaFindFirst = vi.fn();
 const mockPropostaFindMany = vi.fn();
+const mockPedidoFindFirst = vi.fn();
 const mockNotificacaoCreate = vi.fn();
+const mockTransaction = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
+    perfilAgente: {
+      findUnique: (...args: unknown[]) => mockPerfilAgenteFindUnique(...args),
+    },
     pedido: {
-      findUnique: (...args: unknown[]) => mockPedidoFindUnique(...args),
-      findFirst: (...args: unknown[]) => mockPedidoFindFirst(...args),
       findMany: (...args: unknown[]) => mockPedidoFindMany(...args),
+      findFirst: (...args: unknown[]) => mockPedidoFindFirst(...args),
     },
     proposta: {
-      create: (...args: unknown[]) => mockPropostaCreate(...args),
-      findFirst: (...args: unknown[]) => mockPropostaFindFirst(...args),
       findMany: (...args: unknown[]) => mockPropostaFindMany(...args),
     },
     notificacao: {
       create: (...args: unknown[]) => mockNotificacaoCreate(...args),
     },
+    $transaction: (...args: unknown[]) => mockTransaction(...args),
   },
 }));
 
@@ -34,6 +51,8 @@ const {
   PedidoIndisponivelError,
   ProprioPedidoError,
   PropostaDuplicadaError,
+  LicencaNaoVerificadaError,
+  AgenteSemPerfilError,
 } = await import("@/servicos/propostaServico");
 
 const pedidoAberto = {
@@ -48,29 +67,61 @@ function dadosValidos() {
   return { pedidoId: "pedido_1", preco: 250_000, prazoDias: 5 };
 }
 
+/**
+ * Simula uma transacção Prisma interactive: corre o callback com um
+ * `tx` mockado, cujo comportamento cada teste configura conforme o
+ * cenário (pedido ainda aberto, já fechado por outra operação, etc.).
+ */
+function configurarTransacao(tx: Record<string, unknown>) {
+  mockTransaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
+    callback(tx)
+  );
+}
+
 describe("criarProposta", () => {
   beforeEach(() => {
-    mockPedidoFindUnique.mockReset();
-    mockPropostaFindFirst.mockReset();
-    mockPropostaCreate.mockReset();
+    mockPerfilAgenteFindUnique.mockReset();
     mockNotificacaoCreate.mockReset();
+    mockTransaction.mockReset();
+  });
+
+  it("lança AgenteSemPerfilError se o agente não tiver PerfilAgente", async () => {
+    mockPerfilAgenteFindUnique.mockResolvedValue(null);
+
+    await expect(criarProposta("agente_1", dadosValidos())).rejects.toBeInstanceOf(
+      AgenteSemPerfilError
+    );
+    expect(mockTransaction).not.toHaveBeenCalled();
+  });
+
+  it("lança LicencaNaoVerificadaError se a licença do agente ainda não foi verificada — bloqueado com explicação, nunca em silêncio", async () => {
+    mockPerfilAgenteFindUnique.mockResolvedValue({ licencaVerificada: false });
+
+    await expect(criarProposta("agente_1", dadosValidos())).rejects.toBeInstanceOf(
+      LicencaNaoVerificadaError
+    );
+    expect(mockTransaction).not.toHaveBeenCalled();
   });
 
   it("cria a proposta e notifica o armador quando o pedido está aberto e sem proposta aceite", async () => {
-    mockPedidoFindUnique.mockResolvedValue(pedidoAberto);
-    mockPropostaFindFirst.mockResolvedValue(null);
-    mockPropostaCreate.mockResolvedValue({ id: "proposta_1" });
+    mockPerfilAgenteFindUnique.mockResolvedValue({ licencaVerificada: true });
     mockNotificacaoCreate.mockResolvedValue({});
+
+    const txPedidoFindUnique = vi.fn().mockResolvedValue(pedidoAberto);
+    const txPedidoUpdateMany = vi.fn().mockResolvedValue({ count: 1 });
+    const txPropostaCreate = vi
+      .fn()
+      .mockResolvedValue({ id: "proposta_1", pedidoId: "pedido_1" });
+
+    configurarTransacao({
+      pedido: { findUnique: txPedidoFindUnique, updateMany: txPedidoUpdateMany },
+      proposta: { create: txPropostaCreate },
+    });
 
     await criarProposta("agente_1", dadosValidos());
 
-    expect(mockPropostaCreate).toHaveBeenCalledWith({
-      data: {
-        pedidoId: "pedido_1",
-        agenteId: "agente_1",
-        preco: 250_000,
-        prazoDias: 5,
-      },
+    expect(txPropostaCreate).toHaveBeenCalledWith({
+      data: { pedidoId: "pedido_1", agenteId: "agente_1", preco: 250_000, prazoDias: 5 },
     });
     expect(mockNotificacaoCreate).toHaveBeenCalledWith({
       data: {
@@ -83,19 +134,32 @@ describe("criarProposta", () => {
     });
   });
 
-  it("lança PedidoIndisponivelError quando o pedido não existe", async () => {
-    mockPedidoFindUnique.mockResolvedValue(null);
+  it("não falha ao criar a proposta se a notificação falhar (efeito secundário best-effort)", async () => {
+    mockPerfilAgenteFindUnique.mockResolvedValue({ licencaVerificada: true });
+    mockNotificacaoCreate.mockRejectedValue(new Error("falha transitória de rede"));
 
-    await expect(criarProposta("agente_1", dadosValidos())).rejects.toBeInstanceOf(
-      PedidoIndisponivelError
-    );
-    expect(mockPropostaCreate).not.toHaveBeenCalled();
+    configurarTransacao({
+      pedido: {
+        findUnique: vi.fn().mockResolvedValue(pedidoAberto),
+        updateMany: vi.fn().mockResolvedValue({ count: 1 }),
+      },
+      proposta: {
+        create: vi.fn().mockResolvedValue({ id: "proposta_1", pedidoId: "pedido_1" }),
+      },
+    });
+
+    // Não deve rejeitar — a proposta já está gravada com sucesso; a
+    // falha da notificação é só registada em log.
+    await expect(criarProposta("agente_1", dadosValidos())).resolves.toMatchObject({
+      id: "proposta_1",
+    });
   });
 
-  it("lança PedidoIndisponivelError quando o pedido não está aberto", async () => {
-    mockPedidoFindUnique.mockResolvedValue({
-      ...pedidoAberto,
-      estado: "ATRIBUIDO",
+  it("lança PedidoIndisponivelError quando o pedido não existe", async () => {
+    mockPerfilAgenteFindUnique.mockResolvedValue({ licencaVerificada: true });
+    configurarTransacao({
+      pedido: { findUnique: vi.fn().mockResolvedValue(null), updateMany: vi.fn() },
+      proposta: { create: vi.fn() },
     });
 
     await expect(criarProposta("agente_1", dadosValidos())).rejects.toBeInstanceOf(
@@ -103,10 +167,14 @@ describe("criarProposta", () => {
     );
   });
 
-  it("lança PedidoIndisponivelError quando o pedido já tem proposta aceite", async () => {
-    mockPedidoFindUnique.mockResolvedValue({
-      ...pedidoAberto,
-      propostaAceiteId: "proposta_x",
+  it("lança PedidoIndisponivelError quando o pedido não está aberto", async () => {
+    mockPerfilAgenteFindUnique.mockResolvedValue({ licencaVerificada: true });
+    configurarTransacao({
+      pedido: {
+        findUnique: vi.fn().mockResolvedValue({ ...pedidoAberto, estado: "ATRIBUIDO" }),
+        updateMany: vi.fn(),
+      },
+      proposta: { create: vi.fn() },
     });
 
     await expect(criarProposta("agente_1", dadosValidos())).rejects.toBeInstanceOf(
@@ -115,37 +183,53 @@ describe("criarProposta", () => {
   });
 
   it("lança ProprioPedidoError quando o agente é dono do pedido", async () => {
-    mockPedidoFindUnique.mockResolvedValue({
-      ...pedidoAberto,
-      armadorId: "agente_1",
+    mockPerfilAgenteFindUnique.mockResolvedValue({ licencaVerificada: true });
+    configurarTransacao({
+      pedido: {
+        findUnique: vi.fn().mockResolvedValue({ ...pedidoAberto, armadorId: "agente_1" }),
+        updateMany: vi.fn(),
+      },
+      proposta: { create: vi.fn() },
     });
 
     await expect(criarProposta("agente_1", dadosValidos())).rejects.toBeInstanceOf(
       ProprioPedidoError
     );
-    expect(mockPropostaCreate).not.toHaveBeenCalled();
   });
 
-  it("lança PropostaDuplicadaError quando o agente já propôs este pedido", async () => {
-    mockPedidoFindUnique.mockResolvedValue(pedidoAberto);
-    mockPropostaFindFirst.mockResolvedValue({ id: "proposta_anterior" });
+  it("caso limite (corrida): o pedido fecha entre a leitura e a escrita — a escrita condicional apanha isso e lança PedidoIndisponivelError, sem criar a proposta", async () => {
+    mockPerfilAgenteFindUnique.mockResolvedValue({ licencaVerificada: true });
+    const txPropostaCreate = vi.fn();
+
+    configurarTransacao({
+      pedido: {
+        // A leitura inicial ainda vê o pedido ABERTO...
+        findUnique: vi.fn().mockResolvedValue(pedidoAberto),
+        // ...mas a escrita condicional já não encontra a condição válida
+        // (outra operação fechou o pedido entretanto) — count: 0.
+        updateMany: vi.fn().mockResolvedValue({ count: 0 }),
+      },
+      proposta: { create: txPropostaCreate },
+    });
+
+    await expect(criarProposta("agente_1", dadosValidos())).rejects.toBeInstanceOf(
+      PedidoIndisponivelError
+    );
+    expect(txPropostaCreate).not.toHaveBeenCalled();
+  });
+
+  it("lança PropostaDuplicadaError quando a constraint UNIQUE(pedidoId, agenteId) da base de dados dispara", async () => {
+    mockPerfilAgenteFindUnique.mockResolvedValue({ licencaVerificada: true });
+    mockTransaction.mockRejectedValue(
+      new PrismaClientKnownRequestErrorSimulado("Unique constraint failed", {
+        code: "P2002",
+        meta: { target: ["pedidoId", "agenteId"] },
+      })
+    );
 
     await expect(criarProposta("agente_1", dadosValidos())).rejects.toBeInstanceOf(
       PropostaDuplicadaError
     );
-    expect(mockPropostaCreate).not.toHaveBeenCalled();
-  });
-
-  it("verifica a duplicação com o par pedido + agente", async () => {
-    mockPedidoFindUnique.mockResolvedValue(pedidoAberto);
-    mockPropostaFindFirst.mockResolvedValue(null);
-    mockPropostaCreate.mockResolvedValue({ id: "proposta_1" });
-
-    await criarProposta("agente_1", dadosValidos());
-
-    expect(mockPropostaFindFirst).toHaveBeenCalledWith({
-      where: { pedidoId: "pedido_1", agenteId: "agente_1" },
-    });
   });
 });
 

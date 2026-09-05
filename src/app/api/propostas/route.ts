@@ -7,6 +7,8 @@ import {
   PedidoIndisponivelError,
   ProprioPedidoError,
   PropostaDuplicadaError,
+  AgenteSemPerfilError,
+  LicencaNaoVerificadaError,
 } from "@/servicos/propostaServico";
 
 export async function POST(request: Request) {
@@ -42,6 +44,12 @@ export async function POST(request: Request) {
     const proposta = await criarProposta(sessao.user.id, resultado.data);
     return NextResponse.json({ proposta }, { status: 201 });
   } catch (erro) {
+    if (erro instanceof LicencaNaoVerificadaError) {
+      return NextResponse.json({ erro: erro.message }, { status: 403 });
+    }
+    if (erro instanceof AgenteSemPerfilError) {
+      return NextResponse.json({ erro: erro.message }, { status: 404 });
+    }
     if (
       erro instanceof PedidoIndisponivelError ||
       erro instanceof ProprioPedidoError ||

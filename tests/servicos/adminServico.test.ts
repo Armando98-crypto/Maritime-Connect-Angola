@@ -6,7 +6,8 @@ const mockPerfilAgenteFindMany = vi.fn();
 const mockPerfilAgenteUpdate = vi.fn();
 const mockComissaoFindMany = vi.fn();
 const mockComissaoFindUnique = vi.fn();
-const mockComissaoUpdate = vi.fn();
+const mockComissaoUpdateMany = vi.fn();
+const mockComissaoFindUniqueOrThrow = vi.fn();
 const mockComissaoCount = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
@@ -22,7 +23,8 @@ vi.mock("@/lib/prisma", () => ({
     comissao: {
       findMany: (...args: unknown[]) => mockComissaoFindMany(...args),
       findUnique: (...args: unknown[]) => mockComissaoFindUnique(...args),
-      update: (...args: unknown[]) => mockComissaoUpdate(...args),
+      updateMany: (...args: unknown[]) => mockComissaoUpdateMany(...args),
+      findUniqueOrThrow: (...args: unknown[]) => mockComissaoFindUniqueOrThrow(...args),
       count: (...args: unknown[]) => mockComissaoCount(...args),
     },
   },
@@ -51,7 +53,8 @@ function resetMocks() {
   mockPerfilAgenteUpdate.mockReset();
   mockComissaoFindMany.mockReset();
   mockComissaoFindUnique.mockReset();
-  mockComissaoUpdate.mockReset();
+  mockComissaoUpdateMany.mockReset();
+  mockComissaoFindUniqueOrThrow.mockReset();
   mockComissaoCount.mockReset();
 }
 
@@ -172,18 +175,20 @@ describe("listarComissoes", () => {
 describe("confirmarPagamentoComissao", () => {
   beforeEach(resetMocks);
 
-  it("marca como PAGA uma comissão PENDENTE com comprovativo anexado", async () => {
+  it("marca como PAGA uma comissão PENDENTE com comprovativo anexado (escrita condicional)", async () => {
     mockComissaoFindUnique.mockResolvedValue({
       id: "com_1",
-      estado: "PENDENTE",
       comprovativoNome: "comprovativo.pdf",
     });
-    mockComissaoUpdate.mockResolvedValue({});
+    mockComissaoUpdateMany.mockResolvedValue({ count: 1 });
+    mockComissaoFindUniqueOrThrow.mockResolvedValue({ id: "com_1", estado: "PAGA" });
 
     await confirmarPagamentoComissao("com_1");
 
-    expect(mockComissaoUpdate).toHaveBeenCalledWith({
-      where: { id: "com_1" },
+    // A condição de estado vai no WHERE da própria escrita -- mesmo
+    // padrão usado em aceitarProposta/cancelarPedido/concluirPedido.
+    expect(mockComissaoUpdateMany).toHaveBeenCalledWith({
+      where: { id: "com_1", estado: "PENDENTE" },
       data: { estado: "PAGA" },
     });
   });
@@ -194,33 +199,31 @@ describe("confirmarPagamentoComissao", () => {
     await expect(confirmarPagamentoComissao("com_x")).rejects.toBeInstanceOf(
       ComissaoNaoEncontradaError
     );
-    expect(mockComissaoUpdate).not.toHaveBeenCalled();
+    expect(mockComissaoUpdateMany).not.toHaveBeenCalled();
   });
 
-  it("lança ComissaoJaPagaError se a comissão já está paga", async () => {
+  it("lança ComissaoJaPagaError se, no momento da escrita, já não estiver PENDENTE (ex.: confirmada em duplicado)", async () => {
     mockComissaoFindUnique.mockResolvedValue({
       id: "com_1",
-      estado: "PAGA",
       comprovativoNome: "comprovativo.pdf",
     });
+    mockComissaoUpdateMany.mockResolvedValue({ count: 0 });
 
     await expect(confirmarPagamentoComissao("com_1")).rejects.toBeInstanceOf(
       ComissaoJaPagaError
     );
-    expect(mockComissaoUpdate).not.toHaveBeenCalled();
   });
 
   it("lança ComissaoSemComprovativoError se ainda não há comprovativo", async () => {
     mockComissaoFindUnique.mockResolvedValue({
       id: "com_1",
-      estado: "PENDENTE",
       comprovativoNome: null,
     });
 
     await expect(confirmarPagamentoComissao("com_1")).rejects.toBeInstanceOf(
       ComissaoSemComprovativoError
     );
-    expect(mockComissaoUpdate).not.toHaveBeenCalled();
+    expect(mockComissaoUpdateMany).not.toHaveBeenCalled();
   });
 });
 

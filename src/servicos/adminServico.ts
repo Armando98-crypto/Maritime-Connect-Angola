@@ -120,25 +120,31 @@ export async function listarComissoes() {
 export async function confirmarPagamentoComissao(comissaoId: string) {
   const comissao = await prisma.comissao.findUnique({
     where: { id: comissaoId },
-    select: { id: true, estado: true, comprovativoNome: true },
+    select: { id: true, comprovativoNome: true },
   });
 
   if (!comissao) {
     throw new ComissaoNaoEncontradaError();
   }
 
-  if (comissao.estado !== "PENDENTE") {
-    throw new ComissaoJaPagaError();
-  }
-
   if (!comissao.comprovativoNome) {
     throw new ComissaoSemComprovativoError();
   }
 
-  return prisma.comissao.update({
-    where: { id: comissaoId },
+  // Escrita condicional: mesmo padrão usado no resto da plataforma
+  // (aceitarProposta, cancelarPedido, concluirPedido) — protege contra
+  // duplo-clique/duas abas do administrador a confirmar o mesmo
+  // pagamento em simultâneo.
+  const resultado = await prisma.comissao.updateMany({
+    where: { id: comissaoId, estado: "PENDENTE" },
     data: { estado: "PAGA" },
   });
+
+  if (resultado.count === 0) {
+    throw new ComissaoJaPagaError();
+  }
+
+  return prisma.comissao.findUniqueOrThrow({ where: { id: comissaoId } });
 }
 
 /**

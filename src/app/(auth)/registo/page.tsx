@@ -3,7 +3,6 @@
 import { useState, type FormEvent } from "react";
 import { useRouter } from "next/navigation";
 import { signIn } from "next-auth/react";
-import { z } from "zod";
 import { registoSchema } from "@/lib/validacoes/auth";
 import { Input } from "@/components/ui/Input";
 import { Select } from "@/components/ui/Select";

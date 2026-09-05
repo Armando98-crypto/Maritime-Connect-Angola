@@ -99,6 +99,7 @@ model Proposta {
   agente       User    @relation(fields: [agenteId], references: [id])
   pedidoAceite Pedido? @relation("PropostaAceite")
 
+  @@unique([pedidoId, agenteId])
   @@index([pedidoId])
   @@index([agenteId])
   @@map("propostas")

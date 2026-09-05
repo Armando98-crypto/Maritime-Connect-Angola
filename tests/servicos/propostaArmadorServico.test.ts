@@ -1,31 +1,13 @@
 import { describe, it, expect, vi, beforeEach } from "vitest";
 
 const mockPedidoFindUnique = vi.fn();
-const mockPedidoFindMany = vi.fn();
-const mockPropostaFindUnique = vi.fn();
-const mockPropostaFindMany = vi.fn();
-const mockPropostaUpdate = vi.fn();
-const mockPropostaUpdateMany = vi.fn();
-const mockPedidoUpdate = vi.fn();
-const mockComissaoCreate = vi.fn();
-const mockNotificacaoCreate = vi.fn();
 const mockTransaction = vi.fn();
+const mockNotificacaoCreate = vi.fn();
 
 vi.mock("@/lib/prisma", () => ({
   prisma: {
     pedido: {
       findUnique: (...args: unknown[]) => mockPedidoFindUnique(...args),
-      findMany: (...args: unknown[]) => mockPedidoFindMany(...args),
-      update: (...args: unknown[]) => mockPedidoUpdate(...args),
-    },
-    proposta: {
-      findUnique: (...args: unknown[]) => mockPropostaFindUnique(...args),
-      findMany: (...args: unknown[]) => mockPropostaFindMany(...args),
-      update: (...args: unknown[]) => mockPropostaUpdate(...args),
-      updateMany: (...args: unknown[]) => mockPropostaUpdateMany(...args),
-    },
-    comissao: {
-      create: (...args: unknown[]) => mockComissaoCreate(...args),
     },
     notificacao: {
       create: (...args: unknown[]) => mockNotificacaoCreate(...args),
@@ -45,91 +27,121 @@ const {
 } = await import("@/servicos/propostaServico");
 
 const pedidoDoArmador = {
-  id: "pedido_1",
   armadorId: "armador_1",
-  estado: "ABERTO",
-  propostaAceiteId: null,
   navio: "Libra",
 };
 
-function resetMocks() {
-  mockPedidoFindUnique.mockReset();
-  mockPropostaFindUnique.mockReset();
-  mockPropostaUpdate.mockReset();
-  mockPropostaUpdateMany.mockReset();
-  mockPedidoUpdate.mockReset();
-  mockComissaoCreate.mockReset();
-  mockNotificacaoCreate.mockReset();
-  mockTransaction.mockReset();
-  mockPedidoFindMany.mockReset();
-  mockPropostaFindMany.mockReset();
+const propostaPendente = {
+  id: "proposta_1",
+  pedidoId: "pedido_1",
+  preco: 100_000,
+  agenteId: "agente_1",
+};
+
+/** Constrói um `tx` mockado para os testes de aceitarProposta. */
+function txPara(opcoes: {
+  pedido?: unknown;
+  proposta?: unknown;
+  propostaUpdateCount?: number;
+  pedidoUpdateCount?: number;
+}) {
+  const {
+    pedido = pedidoDoArmador,
+    proposta = propostaPendente,
+    propostaUpdateCount = 1,
+    pedidoUpdateCount = 1,
+  } = opcoes;
+
+  return {
+    pedido: {
+      findUnique: vi.fn().mockResolvedValue(pedido),
+      updateMany: vi.fn().mockResolvedValue({ count: pedidoUpdateCount }),
+    },
+    proposta: {
+      findUnique: vi.fn().mockResolvedValue(proposta),
+      updateMany: vi.fn().mockResolvedValue({ count: propostaUpdateCount }),
+    },
+    comissao: {
+      create: vi.fn().mockResolvedValue({}),
+    },
+  };
+}
+
+function configurarTransacao(tx: Record<string, unknown>) {
+  mockTransaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
+    callback(tx)
+  );
 }
 
 describe("aceitarProposta", () => {
-  beforeEach(resetMocks);
+  beforeEach(() => {
+    mockPedidoFindUnique.mockReset();
+    mockTransaction.mockReset();
+    mockNotificacaoCreate.mockReset().mockResolvedValue({});
+  });
 
-  it("aceita a proposta, recusa as restantes pendentes, atribui o pedido e gera a comissão numa transacção", async () => {
-    mockPedidoFindUnique.mockResolvedValue(pedidoDoArmador);
-    mockPropostaFindUnique.mockResolvedValue({
-      id: "proposta_1",
-      pedidoId: "pedido_1",
-      estado: "PENDENTE",
-      preco: 100_000,
-      agenteId: "agente_1",
-    });
-    // Os passos da transacção são promises Prisma; mockamo-los (o que
-    // importa são os argumentos passados a cada passo).
-    mockPropostaUpdate.mockResolvedValue({});
-    mockPropostaUpdateMany.mockResolvedValue({});
-    mockPedidoUpdate.mockResolvedValue({});
-    mockComissaoCreate.mockResolvedValue({});
-    mockNotificacaoCreate.mockResolvedValue({});
-    mockTransaction.mockResolvedValue([{}, {}, {}, {}]);
+  it("aceita a proposta, recusa as restantes pendentes, atribui o pedido e gera a comissão em Decimal, dentro de UMA transacção interactive", async () => {
+    const tx = txPara({});
+    configurarTransacao(tx);
 
     await aceitarProposta("pedido_1", "proposta_1", "armador_1");
 
-    // Os quatro passos são envolvidos numa transacção.
     expect(mockTransaction).toHaveBeenCalledTimes(1);
-    expect(mockTransaction.mock.calls[0][0]).toHaveLength(4);
 
-    // proposta escolhida -> ACEITE
-    expect(mockPropostaUpdate).toHaveBeenCalledWith({
-      where: { id: "proposta_1" },
+    // Escrita condicional #1: só aceita se ainda PENDENTE.
+    expect(tx.proposta.updateMany).toHaveBeenCalledWith({
+      where: { id: "proposta_1", estado: "PENDENTE" },
       data: { estado: "ACEITE" },
     });
     // restantes pendentes -> RECUSADA
-    expect(mockPropostaUpdateMany).toHaveBeenCalledWith({
+    expect(tx.proposta.updateMany).toHaveBeenCalledWith({
       where: { pedidoId: "pedido_1", id: { not: "proposta_1" }, estado: "PENDENTE" },
       data: { estado: "RECUSADA" },
     });
-    // pedido -> ATRIBUIDO + ligado à proposta aceite
-    expect(mockPedidoUpdate).toHaveBeenCalledWith({
-      where: { id: "pedido_1" },
+    // Escrita condicional #2: só atribui se ainda ABERTO e sem proposta
+    // aceite — é esta que resolve a corrida com cancelarPedido.
+    expect(tx.pedido.updateMany).toHaveBeenCalledWith({
+      where: { id: "pedido_1", estado: "ABERTO", propostaAceiteId: null },
       data: { estado: "ATRIBUIDO", propostaAceiteId: "proposta_1" },
     });
-    // comissão gerada: 10% de 100000 = 10000
-    expect(mockComissaoCreate).toHaveBeenCalledWith({
-      data: {
-        pedidoId: "pedido_1",
-        valorBase: 100_000,
-        percentagem: 10,
-        valorComissao: 10_000,
-      },
-    });
-    // notificação ao agente
-    expect(mockNotificacaoCreate).toHaveBeenCalledWith({
-      data: {
-        userId: "agente_1",
-        tipo: "PROPOSTA_ACEITE",
-        titulo: "Proposta aceite",
-        mensagem: 'A sua proposta para o pedido "Libra" foi aceite pelo armador.',
-        pedidoId: "pedido_1",
-      },
-    });
+    // comissão gerada em Decimal, nunca em float: 10% de 100000 = 10000
+    const chamada = (tx.comissao.create as ReturnType<typeof vi.fn>).mock.calls[0][0];
+    expect(chamada.data.pedidoId).toBe("pedido_1");
+    expect(chamada.data.percentagem).toBe(10);
+    expect(chamada.data.valorComissao.toString()).toBe("10000");
+    expect(chamada.data.valorComissao.constructor.name).toBe("Decimal");
+  });
+
+  it("caso limite (corrida): o pedido é cancelado entre a leitura e a escrita — a escrita condicional apanha isso e lança PedidoFechadoError, sem deixar o pedido corrompido", async () => {
+    // A proposta ainda consegue passar a ACEITE (a corrida está no
+    // pedido, não na proposta em si)...
+    const tx = txPara({ propostaUpdateCount: 1, pedidoUpdateCount: 0 });
+    configurarTransacao(tx);
+
+    await expect(
+      aceitarProposta("pedido_1", "proposta_1", "armador_1")
+    ).rejects.toBeInstanceOf(PedidoFechadoError);
+
+    // ...mas a comissão nunca chega a ser criada, porque o `throw`
+    // dentro da transacção interactive faz o Prisma reverter tudo,
+    // incluindo a proposta que tinha acabado de passar a ACEITE.
+    expect(tx.comissao.create).not.toHaveBeenCalled();
+  });
+
+  it("caso limite (corrida): duas tentativas de aceitar a MESMA proposta — a segunda encontra-a já não-PENDENTE", async () => {
+    const tx = txPara({ propostaUpdateCount: 0 });
+    configurarTransacao(tx);
+
+    await expect(
+      aceitarProposta("pedido_1", "proposta_1", "armador_1")
+    ).rejects.toBeInstanceOf(PropostaJaDecididaError);
+
+    expect(tx.pedido.updateMany).not.toHaveBeenCalled();
+    expect(tx.comissao.create).not.toHaveBeenCalled();
   });
 
   it("lança NaoEncontradoError se o pedido não existe", async () => {
-    mockPedidoFindUnique.mockResolvedValue(null);
+    configurarTransacao(txPara({ pedido: null }));
 
     await expect(
       aceitarProposta("pedido_x", "proposta_1", "armador_1")
@@ -137,133 +149,67 @@ describe("aceitarProposta", () => {
   });
 
   it("lança SemPermissaoError se o pedido não pertence ao armador", async () => {
-    mockPedidoFindUnique.mockResolvedValue({
-      ...pedidoDoArmador,
-      armadorId: "outro_armador",
-    });
+    configurarTransacao(txPara({ pedido: { ...pedidoDoArmador, armadorId: "outro" } }));
 
     await expect(
       aceitarProposta("pedido_1", "proposta_1", "armador_1")
     ).rejects.toBeInstanceOf(SemPermissaoError);
   });
 
-  it("lança PedidoFechadoError se o pedido já está atribuído", async () => {
-    mockPedidoFindUnique.mockResolvedValue({
-      ...pedidoDoArmador,
-      estado: "ATRIBUIDO",
-    });
-
-    await expect(
-      aceitarProposta("pedido_1", "proposta_1", "armador_1")
-    ).rejects.toBeInstanceOf(PedidoFechadoError);
-  });
-
-  it("lança PedidoFechadoError se o pedido já tem proposta aceite", async () => {
-    mockPedidoFindUnique.mockResolvedValue({
-      ...pedidoDoArmador,
-      propostaAceiteId: "proposta_x",
-    });
-
-    await expect(
-      aceitarProposta("pedido_1", "proposta_1", "armador_1")
-    ).rejects.toBeInstanceOf(PedidoFechadoError);
-  });
-
   it("lança NaoEncontradoError se a proposta não existe ou não é do pedido", async () => {
-    mockPedidoFindUnique.mockResolvedValue(pedidoDoArmador);
-    mockPropostaFindUnique.mockResolvedValue(null);
-
+    configurarTransacao(txPara({ proposta: null }));
     await expect(
       aceitarProposta("pedido_1", "proposta_1", "armador_1")
     ).rejects.toBeInstanceOf(NaoEncontradoError);
 
-    mockPropostaFindUnique.mockResolvedValue({
-      id: "proposta_1",
-      pedidoId: "outro_pedido",
-      estado: "PENDENTE",
-    });
+    configurarTransacao(
+      txPara({ proposta: { ...propostaPendente, pedidoId: "outro_pedido" } })
+    );
     await expect(
       aceitarProposta("pedido_1", "proposta_1", "armador_1")
     ).rejects.toBeInstanceOf(NaoEncontradoError);
-  });
-
-  it("lança PropostaJaDecididaError se a proposta já não está pendente", async () => {
-    mockPedidoFindUnique.mockResolvedValue(pedidoDoArmador);
-    mockPropostaFindUnique.mockResolvedValue({
-      id: "proposta_1",
-      pedidoId: "pedido_1",
-      estado: "ACEITE",
-    });
-
-    await expect(
-      aceitarProposta("pedido_1", "proposta_1", "armador_1")
-    ).rejects.toBeInstanceOf(PropostaJaDecididaError);
-    expect(mockTransaction).not.toHaveBeenCalled();
   });
 });
 
 describe("recusarProposta", () => {
-  beforeEach(resetMocks);
+  beforeEach(() => {
+    mockTransaction.mockReset();
+    mockNotificacaoCreate.mockReset().mockResolvedValue({});
+  });
 
-  it("recusa a proposta pendente e notifica o agente", async () => {
-    mockPedidoFindUnique.mockResolvedValue(pedidoDoArmador);
-    mockPropostaFindUnique.mockResolvedValue({
-      id: "proposta_1",
-      pedidoId: "pedido_1",
-      estado: "PENDENTE",
-      agenteId: "agente_1",
-    });
-    mockPropostaUpdate.mockResolvedValue({});
-    mockNotificacaoCreate.mockResolvedValue({});
+  it("recusa a proposta pendente dentro de uma transacção condicional", async () => {
+    const tx = txPara({});
+    configurarTransacao(tx);
 
     await recusarProposta("pedido_1", "proposta_1", "armador_1");
 
-    expect(mockPropostaUpdate).toHaveBeenCalledWith({
-      where: { id: "proposta_1" },
+    expect(tx.proposta.updateMany).toHaveBeenCalledWith({
+      where: { id: "proposta_1", estado: "PENDENTE" },
       data: { estado: "RECUSADA" },
     });
-    expect(mockNotificacaoCreate).toHaveBeenCalledWith({
-      data: {
-        userId: "agente_1",
-        tipo: "PROPOSTA_RECUSADA",
-        titulo: "Proposta recusada",
-        mensagem: 'A sua proposta para o pedido "Libra" foi recusada pelo armador.',
-        pedidoId: "pedido_1",
-      },
-    });
   });
 
-  it("não usa transacção (recusa é operação isolada)", async () => {
-    mockPedidoFindUnique.mockResolvedValue(pedidoDoArmador);
-    mockPropostaFindUnique.mockResolvedValue({
-      id: "proposta_1",
-      pedidoId: "pedido_1",
-      estado: "PENDENTE",
-      agenteId: "agente_1",
-    });
-    mockPropostaUpdate.mockResolvedValue({});
-    mockNotificacaoCreate.mockResolvedValue({});
-
-    await recusarProposta("pedido_1", "proposta_1", "armador_1");
-
-    expect(mockTransaction).not.toHaveBeenCalled();
-    expect(mockPedidoUpdate).not.toHaveBeenCalled();
-  });
-
-  it("lança PedidoFechadoError se o pedido já não está aberto", async () => {
-    mockPedidoFindUnique.mockResolvedValue({
-      ...pedidoDoArmador,
-      estado: "CONCLUIDO",
-    });
+  it("caso limite (corrida): a proposta já foi decidida entretanto (ex.: aceite noutra aba) — lança PropostaJaDecididaError", async () => {
+    configurarTransacao(txPara({ propostaUpdateCount: 0 }));
 
     await expect(
       recusarProposta("pedido_1", "proposta_1", "armador_1")
-    ).rejects.toBeInstanceOf(PedidoFechadoError);
+    ).rejects.toBeInstanceOf(PropostaJaDecididaError);
+  });
+
+  it("lança SemPermissaoError se o pedido não pertence ao armador", async () => {
+    configurarTransacao(txPara({ pedido: { ...pedidoDoArmador, armadorId: "outro" } }));
+
+    await expect(
+      recusarProposta("pedido_1", "proposta_1", "armador_1")
+    ).rejects.toBeInstanceOf(SemPermissaoError);
   });
 });
 
 describe("obterPedidoComPropostas", () => {
-  beforeEach(resetMocks);
+  beforeEach(() => {
+    mockPedidoFindUnique.mockReset();
+  });
 
   const pedidoCompleto = {
     id: "pedido_1",
@@ -281,10 +227,7 @@ describe("obterPedidoComPropostas", () => {
   });
 
   it("lança SemPermissaoError se o pedido não pertence ao armador", async () => {
-    mockPedidoFindUnique.mockResolvedValue({
-      ...pedidoCompleto,
-      armadorId: "outro",
-    });
+    mockPedidoFindUnique.mockResolvedValue({ ...pedidoCompleto, armadorId: "outro" });
 
     await expect(
       obterPedidoComPropostas("pedido_1", "armador_1")

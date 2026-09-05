@@ -1,3 +1,4 @@
+import Decimal from "decimal.js";
 import { prisma } from "@/lib/prisma";
 
 /**
@@ -67,11 +68,22 @@ export class ComissaoSemComprovativoError extends Error {
 
 /**
  * Calcula o valor da comissão a partir do valor base e da percentagem
- * fixa da plataforma. Arredonda a 2 casas decimais.
+ * fixa da plataforma.
+ *
+ * Usa Decimal (decimal.js) do início ao fim — nunca `number` — porque
+ * `preco`/`valorComissao` são dinheiro. Uma conversão para float
+ * introduziria o mesmo tipo de erro de arredondamento que o schema já
+ * evita ao usar `Decimal` na base de dados (ex.: 19.99 * 10 / 100 dá,
+ * em aritmética IEEE-754, 1.9990000000000003 em vez de exactamente
+ * 1.999). Aceita qualquer valor que o Decimal.js entenda (Decimal,
+ * string ou number), incluindo instâncias `Prisma.Decimal` devolvidas
+ * pelo Prisma Client — são compatíveis com decimal.js.
  */
-export function calcularValorComissao(valorBase: number): number {
-  const valor = (valorBase * PERCENTAGEM_COMISSAO) / 100;
-  return Math.round(valor * 100) / 100;
+export function calcularValorComissao(valorBase: Decimal.Value): Decimal {
+  return new Decimal(valorBase)
+    .mul(PERCENTAGEM_COMISSAO)
+    .div(100)
+    .toDecimalPlaces(2);
 }
 
 /**
@@ -112,6 +124,50 @@ async function obterAgenteDaComissao(pedidoId: string): Promise<string | null> {
 }
 
 /**
+ * Confirma a assinatura real dos primeiros bytes do ficheiro (os
+ * chamados "magic bytes"), em vez de confiar apenas no `Content-Type`
+ * que o browser envia — esse campo é trivialmente falsificável (basta
+ * mudar o cabeçalho do pedido), por isso não chega para decidir se um
+ * ficheiro é mesmo um PDF/PNG/JPEG/WebP.
+ */
+function assinaturaCorresponde(tipoDeclarado: string, dados: Buffer): boolean {
+  if (dados.length < 12) return false;
+
+  switch (tipoDeclarado) {
+    case "application/pdf":
+      return dados.subarray(0, 4).toString("latin1") === "%PDF";
+    case "image/png":
+      return dados
+        .subarray(0, 8)
+        .equals(Buffer.from([0x89, 0x50, 0x4e, 0x47, 0x0d, 0x0a, 0x1a, 0x0a]));
+    case "image/jpeg":
+      return (
+        dados[0] === 0xff && dados[1] === 0xd8 && dados[2] === 0xff
+      );
+    case "image/webp":
+      return (
+        dados.subarray(0, 4).toString("latin1") === "RIFF" &&
+        dados.subarray(8, 12).toString("latin1") === "WEBP"
+      );
+    default:
+      return false;
+  }
+}
+
+/**
+ * O ficheiro enviado não corresponde ao tipo declarado (a assinatura
+ * dos bytes não bate certo) — pode ser um tipo de ficheiro disfarçado.
+ */
+export class ComprovativoInvalidoError extends Error {
+  constructor() {
+    super(
+      "O ficheiro enviado não parece ser um PDF, PNG, JPEG ou WebP válido."
+    );
+    this.name = "ComprovativoInvalidoError";
+  }
+}
+
+/**
  * Anexa o comprovativo de pagamento a uma comissão PENDENTE. Só o agente
  * dono da comissão (o da proposta aceite do pedido) o pode fazer. Enquanto
  * a comissão estiver PENDENTE, o comprovativo pode ser substituído.
@@ -126,6 +182,10 @@ export async function anexarComprovativo(
     dados: Buffer;
   }
 ) {
+  if (!assinaturaCorresponde(comprovativo.tipo, comprovativo.dados)) {
+    throw new ComprovativoInvalidoError();
+  }
+
   const comissao = await prisma.comissao.findUnique({
     where: { id: comissaoId },
     select: {

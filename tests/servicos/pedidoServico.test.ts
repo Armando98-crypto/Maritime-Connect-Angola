@@ -130,36 +130,90 @@ describe("listarPedidosDoArmador", () => {
 describe("cancelarPedido", () => {
   beforeEach(resetMocks);
 
-  it("cancela um pedido ABERTO, recusa propostas pendentes e notifica agentes", async () => {
-    mockPedidoFindUnique.mockResolvedValue({
-      id: "pedido_1",
-      armadorId: "armador_1",
-      estado: "ABERTO",
-      navio: "Libra",
+  function configurarTransacao(tx: Record<string, unknown>) {
+    mockTransaction.mockImplementation(async (callback: (tx: unknown) => unknown) =>
+      callback(tx)
+    );
+  }
+
+  function txPara(opcoes: {
+    pedido?: unknown;
+    cancelarCount?: number;
+    propostasPendentes?: { id: string; agenteId: string }[];
+  }) {
+    const {
+      pedido = { armadorId: "armador_1", navio: "Libra" },
+      cancelarCount = 1,
+      propostasPendentes = [],
+    } = opcoes;
+
+    return {
+      pedido: {
+        findUnique: vi.fn().mockResolvedValue(pedido),
+        updateMany: vi.fn().mockResolvedValue({ count: cancelarCount }),
+      },
+      proposta: {
+        findMany: vi.fn().mockResolvedValue(propostasPendentes),
+        updateMany: vi.fn().mockResolvedValue({}),
+      },
+    };
+  }
+
+  it("cancela um pedido ABERTO (escrita condicional), recusa propostas pendentes e notifica agentes (best-effort)", async () => {
+    const tx = txPara({
+      propostasPendentes: [
+        { id: "p1", agenteId: "agente_1" },
+        { id: "p2", agenteId: "agente_2" },
+      ],
     });
-    mockPropostaFindMany.mockResolvedValue([
-      { id: "p1", agenteId: "agente_1" },
-      { id: "p2", agenteId: "agente_2" },
-    ]);
-    mockTransaction.mockResolvedValue([{}, {}]);
+    configurarTransacao(tx);
     mockNotificacaoCreate.mockResolvedValue({});
 
     await cancelarPedido("pedido_1", "armador_1");
 
     expect(mockTransaction).toHaveBeenCalledTimes(1);
-    expect(mockPedidoUpdate).toHaveBeenCalledWith({
-      where: { id: "pedido_1" },
+    // Escrita condicional: só cancela se, no momento da escrita, ainda
+    // estiver ABERTO -- é esta condição que resolve a corrida com
+    // aceitarProposta.
+    expect(tx.pedido.updateMany).toHaveBeenCalledWith({
+      where: { id: "pedido_1", estado: "ABERTO" },
       data: { estado: "CANCELADO" },
     });
-    expect(mockPropostaUpdateMany).toHaveBeenCalledWith({
+    expect(tx.proposta.updateMany).toHaveBeenCalledWith({
       where: { pedidoId: "pedido_1", estado: "PENDENTE" },
       data: { estado: "RECUSADA" },
     });
     expect(mockNotificacaoCreate).toHaveBeenCalledTimes(2);
   });
 
+  it("caso limite (corrida): uma proposta é aceite entre a leitura e a escrita -- a escrita condicional apanha isso e lança PedidoNaoCancelavelError, sem sobrepor o estado ATRIBUIDO", async () => {
+    const tx = txPara({ cancelarCount: 0 });
+    configurarTransacao(tx);
+
+    await expect(cancelarPedido("pedido_1", "armador_1")).rejects.toBeInstanceOf(
+      PedidoNaoCancelavelError
+    );
+    expect(tx.proposta.updateMany).not.toHaveBeenCalled();
+  });
+
+  it("não falha o cancelamento se uma notificação individual falhar (best-effort, continua para os restantes agentes)", async () => {
+    const tx = txPara({
+      propostasPendentes: [
+        { id: "p1", agenteId: "agente_1" },
+        { id: "p2", agenteId: "agente_2" },
+      ],
+    });
+    configurarTransacao(tx);
+    mockNotificacaoCreate
+      .mockRejectedValueOnce(new Error("falha transitória"))
+      .mockResolvedValueOnce({});
+
+    await expect(cancelarPedido("pedido_1", "armador_1")).resolves.toBeUndefined();
+    expect(mockNotificacaoCreate).toHaveBeenCalledTimes(2);
+  });
+
   it("lança PedidoNaoEncontradoError se o pedido não existe", async () => {
-    mockPedidoFindUnique.mockResolvedValue(null);
+    configurarTransacao(txPara({ pedido: null }));
 
     await expect(cancelarPedido("pedido_x", "armador_1")).rejects.toBeInstanceOf(
       PedidoNaoEncontradoError
@@ -167,28 +221,10 @@ describe("cancelarPedido", () => {
   });
 
   it("lança SemPermissaoPedidoError se o pedido não pertence ao armador", async () => {
-    mockPedidoFindUnique.mockResolvedValue({
-      id: "pedido_1",
-      armadorId: "outro",
-      estado: "ABERTO",
-      navio: "Libra",
-    });
+    configurarTransacao(txPara({ pedido: { armadorId: "outro", navio: "Libra" } }));
 
     await expect(cancelarPedido("pedido_1", "armador_1")).rejects.toBeInstanceOf(
       SemPermissaoPedidoError
-    );
-  });
-
-  it("lança PedidoNaoCancelavelError se o pedido não está ABERTO", async () => {
-    mockPedidoFindUnique.mockResolvedValue({
-      id: "pedido_1",
-      armadorId: "armador_1",
-      estado: "ATRIBUIDO",
-      navio: "Libra",
-    });
-
-    await expect(cancelarPedido("pedido_1", "armador_1")).rejects.toBeInstanceOf(
-      PedidoNaoCancelavelError
     );
   });
 });

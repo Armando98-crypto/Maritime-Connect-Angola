@@ -95,7 +95,7 @@ export async function listarPedidosDoArmador(armadorId: string, filtroEstado?: s
 export async function concluirPedido(pedidoId: string, armadorId: string) {
   const pedido = await prisma.pedido.findUnique({
     where: { id: pedidoId },
-    select: { id: true, armadorId: true, estado: true },
+    select: { id: true, armadorId: true },
   });
 
   if (!pedido) {
@@ -106,14 +106,19 @@ export async function concluirPedido(pedidoId: string, armadorId: string) {
     throw new SemPermissaoPedidoError();
   }
 
-  if (pedido.estado !== "ATRIBUIDO") {
+  // Escrita condicional: só conclui se, no momento exacto da escrita,
+  // ainda estiver ATRIBUIDO. Consistente com o mesmo padrão usado em
+  // aceitarProposta/cancelarPedido para evitar corridas de concorrência.
+  const resultado = await prisma.pedido.updateMany({
+    where: { id: pedidoId, estado: "ATRIBUIDO" },
+    data: { estado: "CONCLUIDO" },
+  });
+
+  if (resultado.count === 0) {
     throw new PedidoNaoConcluivelError();
   }
 
-  return prisma.pedido.update({
-    where: { id: pedidoId },
-    data: { estado: "CONCLUIDO" },
-  });
+  return prisma.pedido.findUniqueOrThrow({ where: { id: pedidoId } });
 }
 
 /**
@@ -122,50 +127,64 @@ export async function concluirPedido(pedidoId: string, armadorId: string) {
  * RECUSADA, e cada agente é notificado.
  */
 export async function cancelarPedido(pedidoId: string, armadorId: string) {
-  const pedido = await prisma.pedido.findUnique({
-    where: { id: pedidoId },
-    select: { id: true, armadorId: true, estado: true, navio: true },
-  });
-
-  if (!pedido) {
-    throw new PedidoNaoEncontradoError();
-  }
-
-  if (pedido.armadorId !== armadorId) {
-    throw new SemPermissaoPedidoError();
-  }
-
-  if (pedido.estado !== "ABERTO") {
-    throw new PedidoNaoCancelavelError();
-  }
-
-  const propostasPendentes = await prisma.proposta.findMany({
-    where: { pedidoId, estado: "PENDENTE" },
-    select: { id: true, agenteId: true },
-  });
-
-  await prisma.$transaction([
-    prisma.pedido.update({
+  const resultado = await prisma.$transaction(async (tx) => {
+    const pedido = await tx.pedido.findUnique({
       where: { id: pedidoId },
-      data: { estado: "CANCELADO" },
-    }),
-    ...(propostasPendentes.length > 0
-      ? [
-          prisma.proposta.updateMany({
-            where: { pedidoId, estado: "PENDENTE" },
-            data: { estado: "RECUSADA" },
-          }),
-        ]
-      : []),
-  ]);
-
-  for (const p of propostasPendentes) {
-    await criarNotificacao({
-      userId: p.agenteId,
-      tipo: "PROPOSTA_RECUSADA",
-      titulo: "Pedido cancelado",
-      mensagem: `O pedido "${pedido.navio}" foi cancelado pelo armador. A sua proposta foi automaticamente recusada.`,
-      pedidoId,
+      select: { id: true, armadorId: true, navio: true },
     });
+
+    if (!pedido) {
+      throw new PedidoNaoEncontradoError();
+    }
+
+    if (pedido.armadorId !== armadorId) {
+      throw new SemPermissaoPedidoError();
+    }
+
+    // Escrita condicional: a que resolve a corrida com
+    // "aceitarProposta" -- se uma proposta for aceite entre a leitura
+    // acima e este momento, o pedido ja nao esta ABERTO e esta escrita
+    // nao afecta nenhuma linha (count === 0), pelo que o cancelamento
+    // falha de forma limpa em vez de se sobrepor a uma atribuicao ja
+    // confirmada.
+    const cancelado = await tx.pedido.updateMany({
+      where: { id: pedidoId, estado: "ABERTO" },
+      data: { estado: "CANCELADO" },
+    });
+
+    if (cancelado.count === 0) {
+      throw new PedidoNaoCancelavelError();
+    }
+
+    const propostasPendentes = await tx.proposta.findMany({
+      where: { pedidoId, estado: "PENDENTE" },
+      select: { id: true, agenteId: true },
+    });
+
+    if (propostasPendentes.length > 0) {
+      await tx.proposta.updateMany({
+        where: { pedidoId, estado: "PENDENTE" },
+        data: { estado: "RECUSADA" },
+      });
+    }
+
+    return { navio: pedido.navio, propostasPendentes };
+  });
+
+  // Notificacoes sao best effort -- o cancelamento ja esta confirmado
+  // na base de dados nesta linha; uma falha ao notificar nao deve
+  // devolver erro ao armador sobre uma operacao que ja foi bem-sucedida.
+  for (const p of resultado.propostasPendentes) {
+    try {
+      await criarNotificacao({
+        userId: p.agenteId,
+        tipo: "PROPOSTA_RECUSADA",
+        titulo: "Pedido cancelado",
+        mensagem: `O pedido "${resultado.navio}" foi cancelado pelo armador. A sua proposta foi automaticamente recusada.`,
+        pedidoId,
+      });
+    } catch (erro) {
+      console.error("Falha ao notificar agente sobre cancelamento:", erro);
+    }
   }
 }

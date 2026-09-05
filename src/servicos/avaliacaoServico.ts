@@ -1,3 +1,4 @@
+import { Prisma } from "@prisma/client";
 import { prisma } from "@/lib/prisma";
 import type { CriarAvaliacaoInput } from "@/lib/validacoes/avaliacao";
 
@@ -107,14 +108,24 @@ export async function avaliarPedido(
     throw new PedidoSemAgenteError();
   }
 
-  return prisma.avaliacao.create({
-    data: {
-      pedidoId: pedido.id,
-      agenteId: propostaAceite.agenteId,
-      nota: dados.nota,
-      comentario: dados.comentario ?? null,
-    },
-  });
+  try {
+    return await prisma.avaliacao.create({
+      data: {
+        pedidoId: pedido.id,
+        agenteId: propostaAceite.agenteId,
+        nota: dados.nota,
+        comentario: dados.comentario ?? null,
+      },
+    });
+  } catch (erro) {
+    // Caso limite (corrida): duplo-clique em "avaliar", ou duas abas —
+    // a leitura de `pedido.avaliacao` acima pode não apanhar a corrida,
+    // mas a constraint UNIQUE(pedidoId) da base de dados apanha sempre.
+    if (erro instanceof Prisma.PrismaClientKnownRequestError && erro.code === "P2002") {
+      throw new AvaliacaoDuplicadaError();
+    }
+    throw erro;
+  }
 }
 
 /**
