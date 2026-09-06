@@ -1,0 +1,126 @@
+@import "tailwindcss";
+
+:root {
+  /* Navy — cor de assinatura da marca */
+  --navy-900: #0a1f33;
+  --navy-800: #0f2a44;
+  --navy-700: #163b5c;
+
+  /* Ocean — azul funcional (links, acções, informação) */
+  --ocean-600: #1d6fa5;
+  --ocean-500: #2a82bf;
+  --ocean-100: #e3f0f8;
+
+  /* Cyan — accent, uso pontual (nunca como cor de fundo dominante) */
+  --cyan-400: #22b8cf;
+
+  /* Neutros frios */
+  --surface-0: #f7f8fa;
+  --surface-1: #ffffff;
+  --gray-100: #eef1f4;
+  --gray-300: #c9d1da;
+  --gray-500: #8a94a3;
+  --gray-700: #48566b;
+  --text-primary: #101828;
+  --text-secondary: #48566b;
+  --text-muted: #8a94a3;
+
+  /* Estados */
+  --success: #1f9d6f;
+  --success-bg: #e6f6ef;
+  --warning: #d97706;
+  --warning-bg: #fdf2e3;
+  --danger: #dc2626;
+  --danger-bg: #fdeaea;
+  --info: #2a82bf;
+  --info-bg: #e3f0f8;
+
+  --radius-control: 6px;
+  --radius-card: 16px;
+  --radius-hero: 24px;
+
+  --shadow-sm: 0 1px 2px rgba(16, 24, 40, 0.04);
+  --shadow-md: 0 8px 24px rgba(16, 24, 40, 0.06);
+}
+
+@theme inline {
+  --color-navy-900: var(--navy-900);
+  --color-navy-800: var(--navy-800);
+  --color-navy-700: var(--navy-700);
+  --color-ocean-600: var(--ocean-600);
+  --color-ocean-500: var(--ocean-500);
+  --color-ocean-100: var(--ocean-100);
+  --color-cyan-400: var(--cyan-400);
+  --color-surface-0: var(--surface-0);
+  --color-surface-1: var(--surface-1);
+  --color-gray-100: var(--gray-100);
+  --color-gray-300: var(--gray-300);
+  --color-gray-500: var(--gray-500);
+  --color-gray-700: var(--gray-700);
+  --color-text-primary: var(--text-primary);
+  --color-text-secondary: var(--text-secondary);
+  --color-text-muted: var(--text-muted);
+  --color-success: var(--success);
+  --color-success-bg: var(--success-bg);
+  --color-warning: var(--warning);
+  --color-warning-bg: var(--warning-bg);
+  --color-danger: var(--danger);
+  --color-danger-bg: var(--danger-bg);
+  --color-info: var(--info);
+  --color-info-bg: var(--info-bg);
+  --font-display: var(--font-manrope);
+  --font-sans: var(--font-inter);
+}
+
+body {
+  background: var(--surface-0);
+  color: var(--text-primary);
+  font-family: var(--font-inter), ui-sans-serif, system-ui, sans-serif;
+  -webkit-font-smoothing: antialiased;
+}
+
+h1, h2, h3, h4 {
+  font-family: var(--font-manrope), var(--font-inter), sans-serif;
+  font-weight: 600;
+  letter-spacing: -0.01em;
+}
+
+/* Números e métricas alinham melhor com algarismos tabulares */
+.font-metric {
+  font-variant-numeric: tabular-nums;
+  font-family: var(--font-manrope), var(--font-inter), sans-serif;
+}
+
+/* Carrossel do hero — crossfade entre banners + zoom lento (Ken Burns) */
+.hero-imagem {
+  opacity: 0;
+  transition: opacity 1.2s ease-in-out;
+}
+.hero-imagem-activa {
+  opacity: 1;
+  animation: kenburns 9s ease-out forwards;
+}
+@keyframes kenburns {
+  from {
+    transform: scale(1);
+  }
+  to {
+    transform: scale(1.1);
+  }
+}
+
+/* Entrada suave do conteúdo do hero quando a página carrega */
+@keyframes surgir {
+  from {
+    opacity: 0;
+    transform: translateY(18px);
+  }
+  to {
+    opacity: 1;
+    transform: translateY(0);
+  }
+}
+.hero-entrada {
+  animation: surgir 0.9s ease-out both;
+}
+

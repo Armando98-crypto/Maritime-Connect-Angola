@@ -1,0 +1,155 @@
+generator client {
+  provider = "prisma-client-js"
+}
+
+datasource db {
+  provider = "postgresql"
+  url      = env("DATABASE_URL")
+}
+
+enum Papel {
+  ARMADOR
+  AGENTE
+}
+
+enum EstadoPedido {
+  ABERTO
+  ATRIBUIDO
+  CONCLUIDO
+  CANCELADO
+}
+
+enum EstadoProposta {
+  PENDENTE
+  ACEITE
+  RECUSADA
+}
+
+enum EstadoComissao {
+  PENDENTE
+  PAGA
+}
+
+enum TipoNotificacao {
+  PROPOSTA_RECEBIDA
+  PROPOSTA_ACEITE
+  PROPOSTA_RECUSADA
+}
+
+model User {
+  id           String   @id @default(cuid())
+  nome         String
+  email        String   @unique
+  passwordHash String
+  papel        Papel
+  isAdmin      Boolean  @default(false)
+  criadoEm     DateTime @default(now())
+
+  perfilAgente PerfilAgente?
+  pedidos      Pedido[]    @relation("PedidosDoArmador")
+  propostas    Proposta[]
+  avaliacoes   Avaliacao[]
+  notificacoes Notificacao[]
+
+  @@map("users")
+}
+
+model PerfilAgente {
+  userId            String  @id
+  nomeEmpresa       String
+  numeroLicenca     String  @unique
+  licencaVerificada Boolean @default(false)
+
+  user User @relation(fields: [userId], references: [id], onDelete: Cascade)
+
+  @@map("perfis_agente")
+}
+
+model Pedido {
+  id                  String       @id @default(cuid())
+  armadorId           String
+  navio               String
+  dataPrevistaChegada DateTime
+  detalhes            String
+  estado              EstadoPedido @default(ABERTO)
+  propostaAceiteId    String?      @unique
+  criadoEm            DateTime     @default(now())
+
+  armador        User       @relation("PedidosDoArmador", fields: [armadorId], references: [id])
+  propostas      Proposta[] @relation("PropostasDoPedido")
+  propostaAceite Proposta?  @relation("PropostaAceite", fields: [propostaAceiteId], references: [id])
+  comissao       Comissao?
+  avaliacao      Avaliacao?
+  notificacoes   Notificacao[]
+
+  @@index([estado])
+  @@map("pedidos")
+}
+
+model Proposta {
+  id        String         @id @default(cuid())
+  pedidoId  String
+  agenteId  String
+  preco     Decimal        @db.Decimal(12, 2)
+  prazoDias Int
+  estado    EstadoProposta @default(PENDENTE)
+  criadoEm  DateTime       @default(now())
+
+  pedido       Pedido  @relation("PropostasDoPedido", fields: [pedidoId], references: [id])
+  agente       User    @relation(fields: [agenteId], references: [id])
+  pedidoAceite Pedido? @relation("PropostaAceite")
+
+  @@unique([pedidoId, agenteId])
+  @@index([pedidoId])
+  @@index([agenteId])
+  @@map("propostas")
+}
+
+model Comissao {
+  id                  String         @id @default(cuid())
+  pedidoId            String         @unique
+  valorBase           Decimal        @db.Decimal(12, 2)
+  percentagem         Decimal        @db.Decimal(4, 2)
+  valorComissao       Decimal        @db.Decimal(12, 2)
+  estado              EstadoComissao @default(PENDENTE)
+  comprovativoNome    String?
+  comprovativoTipo    String?
+  comprovativoTamanho Int?
+  comprovativoDados   Bytes?
+  criadoEm            DateTime       @default(now())
+
+  pedido Pedido @relation(fields: [pedidoId], references: [id])
+
+  @@map("comissoes")
+}
+
+model Avaliacao {
+  id         String   @id @default(cuid())
+  pedidoId   String   @unique
+  agenteId   String
+  nota       Int
+  comentario String?
+  criadoEm   DateTime @default(now())
+
+  pedido Pedido @relation(fields: [pedidoId], references: [id])
+  agente User   @relation(fields: [agenteId], references: [id])
+
+  @@map("avaliacoes")
+}
+
+model Notificacao {
+  id       String          @id @default(cuid())
+  userId   String
+  tipo     TipoNotificacao
+  titulo   String
+  mensagem String
+  lida     Boolean         @default(false)
+  pedidoId String?
+  criadoEm DateTime        @default(now())
+
+  user   User    @relation(fields: [userId], references: [id], onDelete: Cascade)
+  pedido Pedido? @relation(fields: [pedidoId], references: [id])
+
+  @@index([userId, lida])
+  @@map("notificacoes")
+}
